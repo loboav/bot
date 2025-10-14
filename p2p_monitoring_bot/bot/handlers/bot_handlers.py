@@ -144,23 +144,23 @@ class BotHandlers:
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command"""
         help_text = """
-🤖 **Команды P2P Monitoring Bot:**
+🤖 <b>Команды P2P Monitoring Bot:</b>
 
-🏠 **/start** - Приветствие и инструкция
-🔍 **/check** - Проверить текущие P2P предложения
-⚙️ **/settings** - Настроить диапазон курса
-📊 **/status** - Показать текущие настройки
-❓ **/help** - Показать это сообщение
+🏠 <b>/start</b> - Приветствие и инструкция
+🔍 <b>/check</b> - Проверить текущие P2P предложения
+⚙️ <b>/settings</b> - Настроить диапазон курса
+📊 <b>/status</b> - Показать текущие настройки
+❓ <b>/help</b> - Показать это сообщение
 
-💡 **Как использовать:**
+💡 <b>Как использовать:</b>
 1. Настройте диапазон курса через /settings
 2. Проверяйте предложения командой /check
 3. Получайте прямые ссылки для покупки!
 
-🎯 **Пример:** Если установить диапазон 42.0-43.0 UAH, бот покажет только предложения в этих пределах.
+🎯 <b>Пример:</b> Если установить диапазон 42.0-43.0 UAH, бот покажет только предложения в этих пределах.
         """.strip()
         
-        await update.message.reply_text(help_text, parse_mode='Markdown')
+        await update.message.reply_text(help_text, parse_mode='HTML')
     
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle button callbacks"""
@@ -173,12 +173,12 @@ class BotHandlers:
             user_data = self.bot.user_manager.get_user_data(user_id)
             
             await query.edit_message_text(
-                f"💰 **Установка диапазона курса**\n\n"
+                f"💰 <b>Установка диапазона курса</b>\n\n"
                 f"Отправьте новый диапазон в формате:\n"
-                f"`минимум максимум`\n\n"
-                f"**Например:** `42.0 43.5`\n\n"
-                f"Текущий диапазон: **{user_data['min_rate']:.2f} - {user_data['max_rate']:.2f} UAH**",
-                parse_mode='Markdown'
+                f"<code>минимум максимум</code>\n\n"
+                f"<b>Например:</b> <code>42.0 43.5</code>\n\n"
+                f"Текущий диапазон: <b>{user_data['min_rate']:.2f} - {user_data['max_rate']:.2f} UAH</b>",
+                parse_mode='HTML'
             )
             context.user_data['waiting_for'] = 'rate_range'
         
@@ -208,10 +208,10 @@ class BotHandlers:
                     })
                     
                     await update.message.reply_text(
-                        f"✅ **Диапазон курса обновлен!**\n\n"
-                        f"💰 Новый диапазон: **{min_rate:.2f} - {max_rate:.2f} UAH**\n\n"
+                        f"✅ <b>Диапазон курса обновлен!</b>\n\n"
+                        f"💰 Новый диапазон: <b>{min_rate:.2f} - {max_rate:.2f} UAH</b>\n\n"
                         f"💡 Теперь используйте /check для проверки предложений",
-                        parse_mode='Markdown'
+                        parse_mode='HTML'
                     )
                     
                     context.user_data['waiting_for'] = None
@@ -220,10 +220,10 @@ class BotHandlers:
                     
             except ValueError as e:
                 await update.message.reply_text(
-                    f"❌ **Ошибка:** {str(e)}\n\n"
-                    f"Используйте формат: `минимум максимум`\n"
-                    f"**Например:** `42.0 43.5`",
-                    parse_mode='Markdown'
+                    f"❌ <b>Ошибка:</b> {str(e)}\n\n"
+                    f"Используйте формат: <code>минимум максимум</code>\n"
+                    f"<b>Например:</b> <code>42.0 43.5</code>",
+                    parse_mode='HTML'
                 )
     
     def register_handlers(self, application):
