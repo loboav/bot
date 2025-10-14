@@ -6,23 +6,29 @@ Configuration Settings
 All bot configuration in one place
 """
 
-# Telegram Bot Token - получи у @BotFather
-BOT_TOKEN = "8305075594:AAGdYOnmm8eeKtHOk-OhsKMSicLxPRdiFLE"
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Telegram Bot Token - получи у @BotFather (теперь безопасно в .env)
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 
 # Настройки мониторинга
-MONITORING_INTERVAL = 60  # секунд между проверками
-MAX_OFFERS_PER_NOTIFICATION = 3  # максимум предложений в одном уведомлении
+MONITORING_INTERVAL = int(os.getenv("MONITORING_INTERVAL", "60"))  # секунд между проверками
+MAX_OFFERS_PER_NOTIFICATION = int(os.getenv("MAX_OFFERS_PER_NOTIFICATION", "3"))  # максимум предложений в одном уведомлении
 
 # Настройки браузера
-BROWSER_HEADLESS = True  # True - скрытый режим, False - показывать браузер
-BROWSER_TIMEOUT = 20  # таймаут загрузки страницы в секундах
+BROWSER_HEADLESS = os.getenv("BROWSER_HEADLESS", "true").lower() == "true"  # True - скрытый режим, False - показывать браузер
+BROWSER_TIMEOUT = int(os.getenv("BROWSER_TIMEOUT", "20"))  # таймаут загрузки страницы в секундах
 
 # Файлы данных
 USERS_DATA_FILE = "config/users_settings.json"
 OFFERS_CACHE_FILE = "temp/offers_cache.json"
 
 # Логирование
-LOG_LEVEL = "INFO"  # DEBUG, INFO, WARNING, ERROR
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")  # DEBUG, INFO, WARNING, ERROR
 
 # Настройки по умолчанию для пользователей
 DEFAULT_USER_SETTINGS = {

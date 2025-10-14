@@ -1,0 +1,38 @@
+# Environment variables (CRITICAL - never commit!)
+.env
+*.env
+
+# Bot data
+config/users_settings.json
+temp/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Browser
+chromedriver.exe
+geckodriver.exe

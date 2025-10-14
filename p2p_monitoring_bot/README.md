@@ -42,23 +42,48 @@ p2p_monitoring_bot/
    pip install -r requirements.txt
    ```
 
-2. **Настройка:**
+2. **Настройка (БЕЗОПАСНО):**
    - Получите токен бота у @BotFather в Telegram
-   - Откройте `config/settings.py`
-   - Замените `BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"` на ваш токен
+   - Файл `.env` уже создан с токеном
+   - При необходимости отредактируйте `.env`:
+     ```
+     BOT_TOKEN=ваш_токен_здесь
+     ```
 
 3. **Запуск:**
    ```bash
+   # Автоматический запуск с проверками
+   ./start_bot.bat
+   
+   # Или вручную
    python bot/main.py
    ```
 
-## ⚙️ Настройки
+## ⚡️ Настройки
 
-В файле `config/settings.py` можно настроить:
+**Безопасно** через файл `.env`:
 
-- `MONITORING_INTERVAL` - интервал проверок (секунды)
-- `BROWSER_HEADLESS` - скрытый режим браузера
-- `DEFAULT_USER_SETTINGS` - настройки по умолчанию
+```bash
+# Браузер
+BROWSER_HEADLESS=true          # true = скрытый, false = видимый
+BROWSER_TIMEOUT=20             # таймаут в секундах
+
+# Мониторинг
+MONITORING_INTERVAL=60         # интервал проверок
+MAX_OFFERS_PER_NOTIFICATION=3  # макс. предложений
+
+# Логирование
+LOG_LEVEL=INFO                 # DEBUG, INFO, WARNING, ERROR
+```
+
+## 🔒 Безопасность
+
+✅ **Токен бота** - безопасно сохранен в `.env`  
+✅ **Не коммитится** - `.env` в `.gitignore`  
+✅ **Валидация** - проверка формата токена  
+✅ **Автопроверки** - при запуске
+
+📝 **Подробнее**: см. `SECURITY.md`
 
 ## 📱 Команды бота
 

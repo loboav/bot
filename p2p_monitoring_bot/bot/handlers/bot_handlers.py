@@ -7,7 +7,7 @@ Telegram bot command handlers for P2P monitoring
 """
 
 import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
 class BotHandlers:
@@ -41,6 +41,14 @@ class BotHandlers:
         """.strip()
         
         await update.message.reply_text(welcome_message, parse_mode='HTML')
+        
+        # Show main command menu as reply keyboard
+        keyboard = self.build_main_reply_keyboard()
+        await update.message.reply_text(
+            "📱 Меню команд:",
+            reply_markup=keyboard,
+            parse_mode='HTML'
+        )
     
     async def check_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /check command - show current offers"""
@@ -147,6 +155,7 @@ class BotHandlers:
 🤖 <b>Команды P2P Monitoring Bot:</b>
 
 🏠 <b>/start</b> - Приветствие и инструкция
+📱 <b>/menu</b> - Показать меню команд
 🔍 <b>/check</b> - Проверить текущие P2P предложения
 ⚙️ <b>/settings</b> - Настроить диапазон курса
 📊 <b>/status</b> - Показать текущие настройки
@@ -156,6 +165,8 @@ class BotHandlers:
 1. Настройте диапазон курса через /settings
 2. Проверяйте предложения командой /check
 3. Получайте прямые ссылки для покупки!
+
+📱 <b>Меню команд:</b> Используйте /menu для быстрого доступа к кнопкам команд!
 
 🎯 <b>Пример:</b> Если установить диапазон 42.0-43.0 UAH, бот покажет только предложения в этих пределах.
         """.strip()
@@ -226,9 +237,27 @@ class BotHandlers:
                     parse_mode='HTML'
                 )
     
+    def build_main_reply_keyboard(self):
+        """Build a reply keyboard with main commands"""
+        keyboard_layout = [
+            [KeyboardButton('/check'), KeyboardButton('/settings')],
+            [KeyboardButton('/status'), KeyboardButton('/help')]
+        ]
+        return ReplyKeyboardMarkup(keyboard_layout, resize_keyboard=True)
+
+    async def menu_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show main command menu on demand"""
+        keyboard = self.build_main_reply_keyboard()
+        await update.message.reply_text(
+            "📱 Меню команд:",
+            reply_markup=keyboard,
+            parse_mode='HTML'
+        )
+
     def register_handlers(self, application):
         """Register all handlers"""
         application.add_handler(CommandHandler("start", self.start_command))
+        application.add_handler(CommandHandler("menu", self.menu_command))
         application.add_handler(CommandHandler("check", self.check_command))
         application.add_handler(CommandHandler("settings", self.settings_command))
         application.add_handler(CommandHandler("status", self.status_command))

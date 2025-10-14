@@ -86,10 +86,20 @@ class P2PMonitoringBot:
         return sorted(filtered_offers, key=lambda x: x['price'])
 
 def main():
-    """Main function"""
-    if BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-        print("❌ Пожалуйста, установите BOT_TOKEN в config/settings.py!")
-        print("📱 Получите токен у @BotFather в Telegram")
+    """Main function with security checks"""
+    # Проверка токена
+    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
+        print("❌ Ошибка: BOT_TOKEN не настроен!")
+        print("📝 Инструкция:")
+        print("   1. Создайте файл .env в корне проекта")
+        print("   2. Добавьте строку: BOT_TOKEN=ваш_токен")
+        print("   3. Получите токен у @BotFather в Telegram")
+        return
+    
+    # Проверка формата токена (base validation)
+    if not BOT_TOKEN.count(':') == 1 or len(BOT_TOKEN) < 35:
+        print("❌ Неверный формат BOT_TOKEN!")
+        print("📝 Токен должен выглядеть как: 1234567890:ABCDEF...")
         return
     
     # Initialize bot instance
