@@ -19,7 +19,7 @@
   },
   "667486426": {
     "min_rate": 35.0,
-    "max_rate": 43.0,
+    "max_rate": 44.0,
     "notifications_enabled": true,
     "active_exchanges": [
       "bybit"
