@@ -25,5 +25,14 @@
       "bybit"
     ],
     "last_notification": null
+  },
+  "1149703375": {
+    "min_rate": 35.0,
+    "max_rate": 41.0,
+    "notifications_enabled": true,
+    "active_exchanges": [
+      "bybit"
+    ],
+    "last_notification": null
   }
 }
