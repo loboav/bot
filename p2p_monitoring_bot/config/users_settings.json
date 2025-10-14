@@ -1,0 +1,29 @@
+{
+  "12345": {
+    "min_rate": 41.0,
+    "max_rate": 42.5,
+    "notifications_enabled": true,
+    "active_exchanges": [
+      "bybit"
+    ],
+    "last_notification": null
+  },
+  "99999": {
+    "min_rate": 40.0,
+    "max_rate": 44.0,
+    "notifications_enabled": true,
+    "active_exchanges": [
+      "bybit"
+    ],
+    "last_notification": null
+  },
+  "667486426": {
+    "min_rate": 35.0,
+    "max_rate": 43.0,
+    "notifications_enabled": true,
+    "active_exchanges": [
+      "bybit"
+    ],
+    "last_notification": null
+  }
+}
