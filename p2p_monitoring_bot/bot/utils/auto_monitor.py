@@ -210,7 +210,7 @@ class AutoMonitor:
             exchange_name = offer.get('exchange', 'Unknown')
             
             # Get exchange instance for formatting
-            exchange = self.bot.exchanges.get(exchange_name.lower())
+            exchange = self.bot.exchange_manager.get_exchange(exchange_name.lower())
             if exchange:
                 offer_text = exchange.format_offer_message(offer)
                 message += f"<b>{i}.</b> {offer_text}\n\n"

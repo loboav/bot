@@ -61,8 +61,12 @@ class BotHandlers:
         checking_msg = await update.message.reply_text("🔍 Проверяю текущие P2P предложения...\n⏳ Это может занять 15-20 секунд")
         
         try:
-            # Get offers from ByBit
-            bybit_exchange = self.bot.exchanges['bybit']
+            # Get offers from ByBit through exchange manager
+            bybit_exchange = self.bot.exchange_manager.get_exchange('bybit')
+            if not bybit_exchange:
+                await checking_msg.edit_text("❌ ByBit недоступен. Попробуйте позже.")
+                return
+            
             offers = await bybit_exchange.get_offers()
             
             if not offers:

@@ -41,8 +41,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import bot components
-from exchanges.bybit_p2p import ByBitP2P
-from exchanges.placeholder_exchange import PlaceholderExchange
+from exchanges.exchange_manager import ExchangeManager
 from utils.user_manager import UserManager
 from utils.auto_monitor import AutoMonitor
 from handlers.bot_handlers import BotHandlers
@@ -51,33 +50,30 @@ class P2PMonitoringBot:
     """Main bot class for P2P monitoring"""
     
     def __init__(self):
-        self.exchanges = {
-            'bybit': ByBitP2P(),
-            'okx': PlaceholderExchange('OKX'),
-            'binance': PlaceholderExchange('Binance'),
-            'mexc': PlaceholderExchange('MEXC'),
-            'bitget': PlaceholderExchange('BitGet'),
-            'bingx': PlaceholderExchange('BingX'),
-        }
+        # Initialize exchange manager (handles all exchanges)
+        self.exchange_manager = ExchangeManager()
         
+        # User management
         self.user_manager = UserManager()
+        
+        # Monitoring state
         self.monitoring_active = False
         self.auto_monitor = None  # Will be initialized in main()
+        
+        logger.info(f"🚀 Initialized P2P bot with {self.exchange_manager}")
         
     async def get_offers_for_user(self, user_id: int) -> List[Dict[str, Any]]:
         """Get offers for specific user based on their settings"""
         user_data = self.user_manager.get_user_data(user_id)
         
-        all_offers = []
-        for exchange_name in user_data['active_exchanges']:
-            if exchange_name in self.exchanges:
-                try:
-                    exchange = self.exchanges[exchange_name]
-                    offers = await exchange.get_offers()
-                    if offers:
-                        all_offers.extend(offers)
-                except Exception as e:
-                    logger.error(f"Error getting offers from {exchange_name}: {e}")
+        # Get offers from user's active exchanges through manager
+        try:
+            all_offers = await self.exchange_manager.get_combined_offers(
+                exchange_names=user_data['active_exchanges']
+            )
+        except Exception as e:
+            logger.error(f"Error getting combined offers: {e}")
+            all_offers = []
         
         # Filter by rate range and limits
         filtered_offers = []
@@ -96,7 +92,7 @@ class P2PMonitoringBot:
             if offer_max >= user_min_limit and offer_min <= user_max_limit:
                 filtered_offers.append(offer)
         
-        return sorted(filtered_offers, key=lambda x: x['price'])
+        return filtered_offers
 
 async def async_main():
     """Async main function for running bot and auto monitoring together"""
@@ -143,13 +139,11 @@ async def async_main():
         await application.stop()
         await application.shutdown()
         
-        # Cleanup exchanges
-        for exchange in bot_instance.exchanges.values():
-            if hasattr(exchange, 'cleanup'):
-                try:
-                    exchange.cleanup()
-                except Exception as e:
-                    logger.error(f"Error during cleanup: {e}")
+        # Cleanup exchanges through manager
+        try:
+            bot_instance.exchange_manager.cleanup_all_exchanges()
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
 
 def main():
     """Main function with security checks"""
