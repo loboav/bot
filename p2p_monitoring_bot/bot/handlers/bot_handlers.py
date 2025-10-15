@@ -13,8 +13,9 @@ from telegram.ext import CommandHandler, CallbackQueryHandler, MessageHandler, f
 class BotHandlers:
     """Telegram bot handlers with full P2P functionality"""
     
-    def __init__(self, bot_instance):
+    def __init__(self, bot_instance, auto_monitor=None):
         self.bot = bot_instance
+        self.auto_monitor = auto_monitor
     
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
@@ -33,9 +34,10 @@ class BotHandlers:
 
 ⚙️ <b>Команды:</b>
 /check - Проверить текущие предложения
-/settings - Настроить диапазон курса
+/settings - Настроить диапазон курса и автомониторинг
 /status - Показать текущие настройки
 /help - Показать все команды
+🤖 /automonitor - Управление автомониторингом
 
 💡 <b>Начните с команды /check для просмотра текущих предложений!</b>
         """.strip()
@@ -124,6 +126,7 @@ class BotHandlers:
         keyboard = [
             [InlineKeyboardButton("💰 Изменить диапазон курса", callback_data="set_rate_range")],
             [InlineKeyboardButton("💳 Настроить лимиты", callback_data="set_limits")],
+            [InlineKeyboardButton("🤖 Автомониторинг", callback_data="toggle_automonitor")],
             [InlineKeyboardButton("📊 Показать статус", callback_data="show_status")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -133,6 +136,7 @@ class BotHandlers:
 
 💰 <b>Диапазон курса:</b> {user_data['min_rate']:.2f} - {user_data['max_rate']:.2f} UAH
 💳 <b>Лимиты сделок:</b> {user_data.get('min_limit', 5000):.0f} - {user_data.get('max_limit', 100000):.0f} UAH
+🤖 <b>Автомониторинг:</b> {'✅ Включен' if user_data.get('auto_monitoring_enabled', False) else '❌ Выключен'}
 🏦 <b>Активные биржи:</b> ByBit
 🔔 <b>Уведомления:</b> {'✅ Включены' if user_data['notifications_enabled'] else '❌ Выключены'}
 
@@ -154,6 +158,7 @@ class BotHandlers:
 
 💰 <b>Диапазон курса:</b> {user_data['min_rate']:.2f} - {user_data['max_rate']:.2f} UAH
 💳 <b>Лимиты сделок:</b> {user_data.get('min_limit', 5000):.0f} - {user_data.get('max_limit', 100000):.0f} UAH
+🤖 <b>Автомониторинг:</b> {'✅ Включен' if user_data.get('auto_monitoring_enabled', False) else '❌ Выключен'}
 🔔 <b>Уведомления:</b> {'✅ Включены' if user_data['notifications_enabled'] else '❌ Выключены'}
 
 🏦 <b>Биржи:</b>
@@ -173,7 +178,8 @@ class BotHandlers:
 🏠 <b>/start</b> - Приветствие и инструкция
 📱 <b>/menu</b> - Показать меню команд
 🔍 <b>/check</b> - Проверить текущие P2P предложения
-⚙️ <b>/settings</b> - Настроить диапазон курса
+⚙️ <b>/settings</b> - Настроить диапазон курса и автомониторинг
+🤖 <b>/automonitor</b> - Управление автомониторингом
 📊 <b>/status</b> - Показать текущие настройки
 ❓ <b>/help</b> - Показать это сообщение
 
@@ -225,6 +231,9 @@ class BotHandlers:
             )
             context.user_data['waiting_for'] = 'limits'
         
+        elif query.data == "toggle_automonitor":
+            await self._handle_automonitor_toggle(update, context)
+            
         elif query.data == "show_status":
             await self.status_command(update, context)
     
@@ -316,6 +325,99 @@ class BotHandlers:
                     parse_mode='HTML'
                 )
     
+    async def automonitor_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /automonitor command"""
+        user_id = update.effective_user.id
+        user_data = self.bot.user_manager.get_user_data(user_id)
+        
+        # Check if auto monitor is available
+        if not self.auto_monitor:
+            await update.message.reply_text(
+                "❌ Автомониторинг недоступен. Сервис может быть временно отключен.",
+                parse_mode='HTML'
+            )
+            return
+            
+        # Get monitoring status
+        monitoring_status = self.auto_monitor.get_monitoring_status()
+        is_user_enabled = user_data.get('auto_monitoring_enabled', False)
+        
+        # Create toggle button
+        keyboard = [
+            [InlineKeyboardButton(
+                f"{'❌ Выключить' if is_user_enabled else '✅ Включить'} автомониторинг",
+                callback_data="toggle_automonitor"
+            )],
+            [InlineKeyboardButton("📊 Статус системы", callback_data="automonitor_system_status")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        status_text = f"""
+🤖 <b>Автомониторинг P2P предложений</b>
+
+👤 <b>Ваш статус:</b> {'✅ Включен' if is_user_enabled else '❌ Выключен'}
+
+⚙️ <b>Настройки:</b>
+• Проверка каждые {monitoring_status['check_interval_minutes']} мин
+• Макс. {monitoring_status['max_notifications_per_hour']} уведомлений/час
+• Минимальный интервал: {monitoring_status['safe_interval_minutes']} мин
+
+📊 <b>Система:</b> {'🟢 Активна' if monitoring_status['active'] else '🔴 Остановлена'}
+👥 <b>Активных пользователей:</b> {monitoring_status['enabled_users_count']}
+
+💡 <b>Как это работает:</b>
+Бот автоматически проверяет предложения и отправляет уведомления, когда находит что-то подходящее по вашим критериям (цена, лимиты).
+
+Используйте кнопки ниже для управления:
+        """.strip()
+        
+        await update.message.reply_text(status_text, reply_markup=reply_markup, parse_mode='HTML')
+    
+    async def _handle_automonitor_toggle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle automonitor toggle button"""
+        query = update.callback_query
+        user_id = query.from_user.id
+        
+        if not self.auto_monitor:
+            await query.edit_message_text("❌ Автомониторинг недоступен")
+            return
+            
+        user_data = self.bot.user_manager.get_user_data(user_id)
+        current_status = user_data.get('auto_monitoring_enabled', False)
+        new_status = not current_status
+        
+        # Toggle user's auto monitoring
+        result_message = await self.auto_monitor.toggle_user_monitoring(user_id, new_status)
+        
+        # Update message with new status
+        monitoring_status = self.auto_monitor.get_monitoring_status()
+        
+        keyboard = [
+            [InlineKeyboardButton(
+                f"{'❌ Выключить' if new_status else '✅ Включить'} автомониторинг",
+                callback_data="toggle_automonitor"
+            )],
+            [InlineKeyboardButton("📊 Статус системы", callback_data="automonitor_system_status")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        status_text = f"""
+🤖 <b>Автомониторинг обновлен!</b>
+
+{result_message}
+
+👤 <b>Ваш статус:</b> {'✅ Включен' if new_status else '❌ Выключен'}
+📊 <b>Система:</b> {'🟢 Активна' if monitoring_status['active'] else '🔴 Остановлена'}
+👥 <b>Активных пользователей:</b> {monitoring_status['enabled_users_count']}
+
+💡 Чтобы получать уведомления, убедитесь что:
+• Настроен диапазон цен (/settings)
+• Настроены лимиты сделок
+• Включены уведомления
+        """.strip()
+        
+        await query.edit_message_text(status_text, reply_markup=reply_markup, parse_mode='HTML')
+    
     def build_main_reply_keyboard(self):
         """Build a reply keyboard with main commands"""
         keyboard_layout = [
@@ -339,6 +441,7 @@ class BotHandlers:
         application.add_handler(CommandHandler("menu", self.menu_command))
         application.add_handler(CommandHandler("check", self.check_command))
         application.add_handler(CommandHandler("settings", self.settings_command))
+        application.add_handler(CommandHandler("automonitor", self.automonitor_command))
         application.add_handler(CommandHandler("status", self.status_command))
         application.add_handler(CommandHandler("help", self.help_command))
         application.add_handler(CallbackQueryHandler(self.button_callback))

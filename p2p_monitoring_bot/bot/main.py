@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 from exchanges.bybit_p2p import ByBitP2P
 from exchanges.placeholder_exchange import PlaceholderExchange
 from utils.user_manager import UserManager
+from utils.auto_monitor import AutoMonitor
 from handlers.bot_handlers import BotHandlers
 
 class P2PMonitoringBot:
@@ -61,6 +62,7 @@ class P2PMonitoringBot:
         
         self.user_manager = UserManager()
         self.monitoring_active = False
+        self.auto_monitor = None  # Will be initialized in main()
         
     async def get_offers_for_user(self, user_id: int) -> List[Dict[str, Any]]:
         """Get offers for specific user based on their settings"""
@@ -96,6 +98,59 @@ class P2PMonitoringBot:
         
         return sorted(filtered_offers, key=lambda x: x['price'])
 
+async def async_main():
+    """Async main function for running bot and auto monitoring together"""
+    # Initialize bot instance
+    bot_instance = P2PMonitoringBot()
+    
+    # Create application
+    application = Application.builder().token(BOT_TOKEN).build()
+    
+    # Initialize auto monitor
+    auto_monitor = AutoMonitor(bot_instance, application)
+    bot_instance.auto_monitor = auto_monitor
+    
+    # Initialize handlers with auto monitor
+    handlers = BotHandlers(bot_instance, auto_monitor)
+    
+    # Add handlers
+    handlers.register_handlers(application)
+    
+    try:
+        # Start auto monitoring in background
+        logger.info("🚀 Starting auto monitoring...")
+        await auto_monitor.start_monitoring()
+        
+        # Start the bot
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        
+        # Keep running until interrupted
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except KeyboardInterrupt:
+            logger.info("KeyboardInterrupt received")
+            
+    finally:
+        # Stop auto monitoring
+        logger.info("🚫 Stopping auto monitoring...")
+        await auto_monitor.stop_monitoring()
+        
+        # Stop telegram bot
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
+        
+        # Cleanup exchanges
+        for exchange in bot_instance.exchanges.values():
+            if hasattr(exchange, 'cleanup'):
+                try:
+                    exchange.cleanup()
+                except Exception as e:
+                    logger.error(f"Error during cleanup: {e}")
+
 def main():
     """Main function with security checks"""
     # Проверка токена
@@ -113,30 +168,20 @@ def main():
         print("📝 Токен должен выглядеть как: 1234567890:ABCDEF...")
         return
     
-    # Initialize bot instance
-    bot_instance = P2PMonitoringBot()
-    handlers = BotHandlers(bot_instance)
-    
-    # Create application
-    application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Add handlers
-    handlers.register_handlers(application)
-    
     print("🚀 P2P Monitoring Bot запущен!")
     print("📱 Отправьте /start боту для начала работы")
     print("⚡ Бот поддерживает реальные данные с ByBit!")
+    print("🤖 Автомониторинг: /automonitor")
     
     try:
-        # Start the bot
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        # Run the async main function
+        asyncio.run(async_main())
     except KeyboardInterrupt:
         print("\n⏹️ Остановка бота...")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        print(f"❌ Неожиданная ошибка: {e}")
     finally:
-        # Cleanup
-        for exchange in bot_instance.exchanges.values():
-            if hasattr(exchange, 'cleanup'):
-                exchange.cleanup()
         print("✅ Бот остановлен")
 
 if __name__ == '__main__':
