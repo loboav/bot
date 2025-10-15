@@ -77,11 +77,22 @@ class P2PMonitoringBot:
                 except Exception as e:
                     logger.error(f"Error getting offers from {exchange_name}: {e}")
         
-        # Filter by rate range
-        filtered_offers = [
-            offer for offer in all_offers
-            if user_data['min_rate'] <= offer['price'] <= user_data['max_rate']
-        ]
+        # Filter by rate range and limits
+        filtered_offers = []
+        for offer in all_offers:
+            # Price filter
+            if not (user_data['min_rate'] <= offer['price'] <= user_data['max_rate']):
+                continue
+                
+            # Limits filter - check overlap between offer limits and user requirements
+            offer_min = offer.get('min_amount', 0)
+            offer_max = offer.get('max_amount', 999999)
+            user_min_limit = user_data.get('min_limit', 0)
+            user_max_limit = user_data.get('max_limit', 999999)
+            
+            # Check if there's overlap between offer limits and user limits
+            if offer_max >= user_min_limit and offer_min <= user_max_limit:
+                filtered_offers.append(offer)
         
         return sorted(filtered_offers, key=lambda x: x['price'])
 

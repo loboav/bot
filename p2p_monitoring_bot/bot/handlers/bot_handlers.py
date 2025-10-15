@@ -67,11 +67,22 @@ class BotHandlers:
                 await checking_msg.edit_text("❌ Не удалось получить предложения. Попробуйте позже.")
                 return
             
-            # Filter offers by user's rate range
-            filtered_offers = [
-                offer for offer in offers
-                if user_data['min_rate'] <= offer['price'] <= user_data['max_rate']
-            ]
+            # Filter offers by user's rate range AND limits
+            filtered_offers = []
+            for offer in offers:
+                # Price filter
+                if not (user_data['min_rate'] <= offer['price'] <= user_data['max_rate']):
+                    continue
+                    
+                # Limits filter - check if offer's limits overlap with user's requirements
+                offer_min = offer.get('min_amount', 0)
+                offer_max = offer.get('max_amount', 999999)
+                user_min_limit = user_data.get('min_limit', 0)
+                user_max_limit = user_data.get('max_limit', 999999)
+                
+                # Check if there's overlap between offer limits and user limits
+                if offer_max >= user_min_limit and offer_min <= user_max_limit:
+                    filtered_offers.append(offer)
             
             # Prepare response
             if not filtered_offers:
@@ -79,9 +90,11 @@ class BotHandlers:
                 min_price = min(all_prices) if all_prices else 0
                 max_price = max(all_prices) if all_prices else 0
                 
-                response = f"📊 <b>Найдено {len(offers)} предложений</b>, но ни одно не попадает в ваш диапазон <b>{user_data['min_rate']:.2f}-{user_data['max_rate']:.2f} UAH</b>\n\n"
-                response += f"💡 Доступный диапазон цен: <b>{min_price:.2f} - {max_price:.2f} UAH</b>\n\n"
-                response += "⚙️ Используйте /settings для изменения диапазона"
+                response = f"📊 <b>Найдено {len(offers)} предложений</b>, но ни одно не подходит по вашим критериям:\n\n"
+                response += f"💰 Ваш диапазон цен: <b>{user_data['min_rate']:.2f}-{user_data['max_rate']:.2f} UAH</b>\n"
+                response += f"💳 Ваши лимиты: <b>{user_data.get('min_limit', 5000):.0f}-{user_data.get('max_limit', 100000):.0f} UAH</b>\n\n"
+                response += f"💡 Доступные цены: <b>{min_price:.2f} - {max_price:.2f} UAH</b>\n\n"
+                response += "⚡️ Используйте /settings для изменения настроек"
             else:
                 # Sort by price (best offers first)
                 filtered_offers.sort(key=lambda x: x['price'])
@@ -110,14 +123,16 @@ class BotHandlers:
         
         keyboard = [
             [InlineKeyboardButton("💰 Изменить диапазон курса", callback_data="set_rate_range")],
+            [InlineKeyboardButton("💳 Настроить лимиты", callback_data="set_limits")],
             [InlineKeyboardButton("📊 Показать статус", callback_data="show_status")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         settings_text = f"""
-⚙️ <b>Настройки мониторинга</b>
+⚡️ <b>Настройки мониторинга</b>
 
 💰 <b>Диапазон курса:</b> {user_data['min_rate']:.2f} - {user_data['max_rate']:.2f} UAH
+💳 <b>Лимиты сделок:</b> {user_data.get('min_limit', 5000):.0f} - {user_data.get('max_limit', 100000):.0f} UAH
 🏦 <b>Активные биржи:</b> ByBit
 🔔 <b>Уведомления:</b> {'✅ Включены' if user_data['notifications_enabled'] else '❌ Выключены'}
 
@@ -138,6 +153,7 @@ class BotHandlers:
 🆔 <b>ID:</b> {user_id}
 
 💰 <b>Диапазон курса:</b> {user_data['min_rate']:.2f} - {user_data['max_rate']:.2f} UAH
+💳 <b>Лимиты сделок:</b> {user_data.get('min_limit', 5000):.0f} - {user_data.get('max_limit', 100000):.0f} UAH
 🔔 <b>Уведомления:</b> {'✅ Включены' if user_data['notifications_enabled'] else '❌ Выключены'}
 
 🏦 <b>Биржи:</b>
@@ -193,6 +209,22 @@ class BotHandlers:
             )
             context.user_data['waiting_for'] = 'rate_range'
         
+        elif query.data == "set_limits":
+            user_data = self.bot.user_manager.get_user_data(user_id)
+            
+            await query.edit_message_text(
+                f"💳 <b>Настройка лимитов сделок</b>\n\n"
+                f"Отправьте новые лимиты в формате:\n"
+                f"<code>минимум максимум</code>\n\n"
+                f"<b>Пример:</b> <code>5000 50000</code>\n\n"
+                f"Текущие лимиты: <b>{user_data.get('min_limit', 5000):.0f} - {user_data.get('max_limit', 100000):.0f} UAH</b>\n\n"
+                f"💡 <b>Почему это важно:</b>\n"
+                f"• Маленькие суммы = большая комиссия\n"
+                f"• Оптимально: от 5000 UAH",
+                parse_mode='HTML'
+            )
+            context.user_data['waiting_for'] = 'limits'
+        
         elif query.data == "show_status":
             await self.status_command(update, context)
     
@@ -234,6 +266,53 @@ class BotHandlers:
                     f"❌ <b>Ошибка:</b> {str(e)}\n\n"
                     f"Используйте формат: <code>минимум максимум</code>\n"
                     f"<b>Например:</b> <code>42.0 43.5</code>",
+                    parse_mode='HTML'
+                )
+        
+        elif context.user_data.get('waiting_for') == 'limits':
+            try:
+                text = update.message.text.strip()
+                parts = text.split()
+                
+                if len(parts) == 2:
+                    min_limit = float(parts[0].replace(',', '.'))
+                    max_limit = float(parts[1].replace(',', '.'))
+                    
+                    if min_limit >= max_limit:
+                        raise ValueError("Минимум должен быть меньше максимума")
+                    
+                    if min_limit < 100 or max_limit > 1000000:
+                        raise ValueError("Лимиты должны быть в разумных пределах (100-1,000,000 UAH)")
+                    
+                    if min_limit < 1000:
+                        await update.message.reply_text(
+                            f"⚠️ <b>Предупреждение:</b> Минимальный лимит {min_limit:.0f} UAH очень мал.\n"
+                            f"💰 Комиссия может быть значительной!",
+                            parse_mode='HTML'
+                        )
+                    
+                    self.bot.user_manager.update_user_data(update.effective_user.id, {
+                        'min_limit': min_limit,
+                        'max_limit': max_limit
+                    })
+                    
+                    await update.message.reply_text(
+                        f"✅ <b>Лимиты сделок обновлены!</b>\n\n"
+                        f"💳 Новые лимиты: <b>{min_limit:.0f} - {max_limit:.0f} UAH</b>\n\n"
+                        f"💡 Теперь вы увидите только предложения с лимитами в этом диапазоне!\n"
+                        f"🚀 Используйте /check для проверки",
+                        parse_mode='HTML'
+                    )
+                    
+                    context.user_data['waiting_for'] = None
+                else:
+                    raise ValueError("Неверный формат")
+                    
+            except ValueError as e:
+                await update.message.reply_text(
+                    f"❌ <b>Ошибка:</b> {str(e)}\n\n"
+                    f"Используйте формат: <code>минимум максимум</code>\n"
+                    f"<b>Например:</b> <code>5000 50000</code>",
                     parse_mode='HTML'
                 )
     

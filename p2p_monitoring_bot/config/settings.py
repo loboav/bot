@@ -34,6 +34,8 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")  # DEBUG, INFO, WARNING, ERROR
 DEFAULT_USER_SETTINGS = {
     'min_rate': 35.0,
     'max_rate': 43.0,
+    'min_limit': 5000.0,     # Минимальный лимит в UAH
+    'max_limit': 100000.0,   # Максимальный лимит в UAH  
     'notifications_enabled': True,
     'active_exchanges': ['bybit']  # Пока только ByBit работает
 }

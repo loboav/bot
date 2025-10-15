@@ -43,14 +43,26 @@ class ByBitP2P(BaseExchange):
             if BROWSER_HEADLESS:
                 chrome_options.add_argument('--headless=new')
             
-            # Standard optimization options
+            # MAXIMUM SPEED optimizations
             chrome_options.add_argument('--no-sandbox')
             chrome_options.add_argument('--disable-dev-shm-usage')
             chrome_options.add_argument('--disable-blink-features=AutomationControlled')
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option('useAutomationExtension', False)
-            chrome_options.add_argument('--window-size=1920,1080')
+            chrome_options.add_argument('--window-size=1280,720')  # Smaller window = faster
             chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+            
+            # SPEED BOOST: Disable unnecessary features (SAFE options)
+            chrome_options.add_argument('--disable-extensions')
+            chrome_options.add_argument('--disable-plugins')
+            chrome_options.add_argument('--disable-images')  # Don't load images - major speed boost
+            chrome_options.add_argument('--disable-web-security')
+            chrome_options.add_argument('--disable-features=VizDisplayCompositor')
+            chrome_options.add_argument('--disable-background-timer-throttling')
+            chrome_options.add_argument('--disable-backgrounding-occluded-windows')
+            chrome_options.add_argument('--disable-renderer-backgrounding')
+            chrome_options.add_argument('--disable-default-apps')
+            chrome_options.add_argument('--disable-sync')
             
             self.driver = webdriver.Chrome(options=chrome_options)
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -63,43 +75,56 @@ class ByBitP2P(BaseExchange):
             return False
     
     async def get_offers(self) -> List[Dict[str, Any]]:
-        """Extract real P2P offers from ByBit website"""
+        """Extract real P2P offers from ByBit website - OPTIMIZED VERSION"""
+        # Check cache first (5 minutes TTL) 
+        if self.offers_cache and self.last_update:
+            from datetime import timedelta
+            if datetime.now() - self.last_update < timedelta(minutes=5):
+                logger.info(f"Using cached ByBit data ({len(self.offers_cache)} offers)")
+                return self.offers_cache
+        
         if not self.setup_browser():
             logger.warning("Browser setup failed, returning cached offers")
             return self.offers_cache
             
         try:
-            logger.info("Fetching ByBit P2P offers...")
+            logger.info("Fetching ByBit P2P offers... (FAST MODE)")
+            start_time = datetime.now()
             
             # Navigate to P2P page
             self.driver.get(self.base_url)
             
-            # Wait for page load
+            # OPTIMIZATION: Reduced wait times and smarter loading
             try:
-                WebDriverWait(self.driver, BROWSER_TIMEOUT).until(
+                WebDriverWait(self.driver, 10).until(
                     EC.presence_of_element_located((By.TAG_NAME, "body"))
                 )
             except:
                 logger.error("Page load timeout")
                 return self.offers_cache
             
-            # Wait for dynamic content
-            await asyncio.sleep(8)
+            # OPTIMIZATION: Much shorter wait for dynamic content
+            await asyncio.sleep(3)  # Reduced from 8 to 3 seconds
             
-            # Scroll to trigger lazy loading
-            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
-            await asyncio.sleep(2)
+            # OPTIMIZATION: Multiple small scrolls instead of one big
+            for i in range(3):
+                self.driver.execute_script(f"window.scrollTo(0, {200 * (i + 1)});")
+                await asyncio.sleep(0.5)  # Very short waits
             
-            # Extract offers from page text
+            # Extract offers from page text - OPTIMIZED
             page_text = self.driver.find_element(By.TAG_NAME, "body").text
             offers = self.parse_offers_from_page_text(page_text)
+            
+            # Calculate timing
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
             
             if offers:
                 self.offers_cache = offers
                 self.last_update = datetime.now()
-                logger.info(f"ByBit: Successfully extracted {len(offers)} offers")
+                logger.info(f"ByBit: Successfully extracted {len(offers)} offers in {duration:.1f}s (FAST!)")
             else:
-                logger.warning("No offers extracted from ByBit page")
+                logger.warning(f"No offers extracted from ByBit page (took {duration:.1f}s)")
             
             return offers if offers else self.offers_cache
             

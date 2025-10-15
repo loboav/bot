@@ -15,7 +15,9 @@
     "active_exchanges": [
       "bybit"
     ],
-    "last_notification": null
+    "last_notification": null,
+    "min_limit": 10000.0,
+    "max_limit": 50000.0
   },
   "667486426": {
     "min_rate": 35.0,
@@ -24,7 +26,9 @@
     "active_exchanges": [
       "bybit"
     ],
-    "last_notification": null
+    "last_notification": null,
+    "min_limit": 700.0,
+    "max_limit": 13000.0
   },
   "1149703375": {
     "min_rate": 35.0,
