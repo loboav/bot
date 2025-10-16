@@ -36,8 +36,8 @@
     "max_limit": 90000.0,
     "notifications_enabled": true,
     "auto_monitoring_enabled": true,
-    "last_notification_time": "2025-10-16T13:09:23.340590",
-    "notification_count_hour": 10,
+    "last_notification_time": "2025-10-16T17:03:38.999786",
+    "notification_count_hour": 5,
     "active_exchanges": [
       "bybit",
       "bitget"

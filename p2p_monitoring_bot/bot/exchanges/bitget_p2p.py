@@ -117,9 +117,10 @@ class BitgetP2P(BaseExchange):
                 self.driver.execute_script(f"window.scrollTo(0, {300 * (i + 1)});")
                 await asyncio.sleep(1)  # Short waits
             
-            # Extract offers from page text - OPTIMIZED
+            # Extract offers from page text AND HTML - OPTIMIZED
             page_text = self.driver.find_element(By.TAG_NAME, "body").text
-            offers = self.parse_offers_from_page_text(page_text)
+            page_source = self.driver.page_source  # Get HTML for user IDs
+            offers = self.parse_offers_from_page_text(page_text, page_source)
             
             # Calculate timing
             end_time = datetime.now()
@@ -138,12 +139,16 @@ class BitgetP2P(BaseExchange):
             logger.error(f"Bitget offers fetch failed: {e}")
             return self.offers_cache
     
-    def parse_offers_from_page_text(self, page_text: str) -> List[Dict[str, Any]]:
-        """Parse P2P offers from Bitget page text using real structure"""
+    def parse_offers_from_page_text(self, page_text: str, page_source: str = "") -> List[Dict[str, Any]]:
+        """Parse P2P offers from Bitget page text and HTML using real structure"""
         offers = []
         
         try:
             lines = page_text.split('\n')
+            
+            # Extract user IDs from HTML source
+            user_ids = re.findall(r'/p2p-trade/user/([a-f0-9]+)', page_source) if page_source else []
+            logger.info(f"Found {len(user_ids)} user IDs in HTML")
             
             # Найдем все цены в USD (как в дебаг выводе)
             price_patterns = []
@@ -190,7 +195,7 @@ class BitgetP2P(BaseExchange):
             logger.info(f"Found {len(price_patterns)} price patterns, {len(usdt_patterns)} USDT patterns, {len(limit_patterns)} limit patterns, {len(username_patterns)} usernames")
             
             # Сопоставляем данные по позиции в тексте
-            for price_idx, price_line, price_uah in price_patterns[:15]:
+            for offer_idx, (price_idx, price_line, price_uah) in enumerate(price_patterns[:15]):
                 try:
                     # Цена уже в UAH, конвертация не нужна
                     # price_uah уже готова
@@ -205,6 +210,9 @@ class BitgetP2P(BaseExchange):
                         if distance < min_distance and distance <= 20:
                             username = user_name
                             min_distance = distance
+                    
+                    # Получаем соответствующий user ID для прямой ссылки
+                    user_id = user_ids[offer_idx] if offer_idx < len(user_ids) else None
                     
                     # Ищем ближайшее количество USDT
                     usdt_amount = 0.0
@@ -234,6 +242,15 @@ class BitgetP2P(BaseExchange):
                         max_limit_uah = 100000.0
                     
                     # Создаем предложение с правильными полями для совместимости с ботом
+                    
+                    # Формируем ссылки
+                    if user_id:
+                        # Прямая ссылка на конкретного пользователя (ТО ЧТО НАДО!)
+                        trade_url = f"https://www.bitget.com/ru/p2p-trade/user/{user_id}"
+                    else:
+                        # Fallback к старому формату
+                        trade_url = f"https://www.bitget.com/ru/p2p-trade?fiatName={username}"
+                    
                     offer = {
                         'exchange': 'bitget',
                         'username': username,
@@ -244,9 +261,9 @@ class BitgetP2P(BaseExchange):
                         'max_amount': max_limit_uah,  # bot_handlers ожидает 'max_amount'
                         'min_limit': min_limit_uah,   # для обратной совместимости
                         'max_limit': max_limit_uah,   # для обратной совместимости
-                        'trade_url': f"https://www.bitget.com/ru/p2p-trade?fiatName={username}",  # Прямая ссылка
-                        'quick_url': self.base_url,  # Быстрая ссылка
-                        'link': f"https://www.bitget.com/ru/p2p-trade?fiatName={username}",      # для fallback формата
+                        'trade_url': trade_url,        # Прямая ссылка (ТЕПЕРЬ ПРАВИЛЬНАЯ!)
+                        'quick_url': self.base_url,    # Быстрая ссылка
+                        'link': trade_url,             # для fallback формата
                         'timestamp': datetime.now().isoformat()
                     }
                     
