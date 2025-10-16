@@ -32,7 +32,8 @@ class BotHandlers:
 🏦 <b>Доступные биржи:</b>
 ✅ ByBit (реальные данные через браузер)
 ✅ Bitget (реальные данные через API)
-🔄 OKX, Binance, MEXC (скоро)
+✅ Binance (реальные данные через браузер)
+🔄 OKX, MEXC, BingX (скоро)
 
 ⚙️ <b>Команды:</b>
 /check - Проверить предложения с всех активных бирж
@@ -61,7 +62,7 @@ class BotHandlers:
         user_data = self.bot.user_manager.get_user_data(user_id)
         
         # Get active exchanges for user
-        active_exchanges = user_data.get('active_exchanges', ['bybit', 'bitget'])
+        active_exchanges = user_data.get('active_exchanges', ['bybit', 'binance', 'bitget'])
         
         # Send "checking" message
         exchanges_text = ", ".join([ex.title() for ex in active_exchanges])
@@ -173,7 +174,7 @@ class BotHandlers:
 💰 <b>Диапазон курса:</b> {user_data['min_rate']:.2f} - {user_data['max_rate']:.2f} UAH
 💳 <b>Лимиты сделок:</b> {user_data.get('min_limit', 5000):.0f} - {user_data.get('max_limit', 100000):.0f} UAH
 🤖 <b>Автомониторинг:</b> {'✅ Включен' if user_data.get('auto_monitoring_enabled', False) else '❌ Выключен'}
-🏦 <b>Активные биржи:</b> {', '.join([ex.title() for ex in user_data.get('active_exchanges', ['bybit', 'bitget'])])}
+🏦 <b>Активные биржи:</b> {', '.join([ex.title() for ex in user_data.get('active_exchanges', ['bybit', 'binance', 'bitget'])])}
 🔔 <b>Уведомления:</b> {'✅ Включены' if user_data['notifications_enabled'] else '❌ Выключены'}
 
 Выберите что настроить:
@@ -199,10 +200,11 @@ class BotHandlers:
 
 🏦 <b>Биржи:</b>
 ✅ ByBit - активна (браузер)
-✅ Bitget - активна (API)
-🔄 OKX, Binance, MEXC - скоро
+✅ Bitget - активна (браузер)
+✅ Binance - активна (браузер)
+🔄 OKX, MEXC, BingX - скоро
 
-🏦 <b>Ваши активные:</b> {', '.join([ex.title() for ex in user_data.get('active_exchanges', ['bybit', 'bitget'])])}
+🏦 <b>Ваши активные:</b> {', '.join([ex.title() for ex in user_data.get('active_exchanges', ['bybit', 'binance', 'bitget'])])}
 
 ⏰ <b>Время проверки:</b> {context.application.bot.start_time if hasattr(context.application.bot, 'start_time') else 'N/A'}
         """.strip()
@@ -489,7 +491,7 @@ class BotHandlers:
         
         available_exchanges = self.bot.exchange_manager.get_available_exchanges()
         active_exchanges = self.bot.exchange_manager.get_active_exchanges()
-        user_exchanges = user_data.get('active_exchanges', ['bybit', 'bitget'])
+        user_exchanges = user_data.get('active_exchanges', ['bybit', 'bitget', 'binance'])
         
         # Create keyboard with exchange toggles
         keyboard = []
@@ -541,7 +543,7 @@ class BotHandlers:
             await query.edit_message_text(f"❌ Биржа {exchange_name.title()} недоступна")
             return
 
-        user_exchanges = set(user_data.get('active_exchanges', ['bybit', 'bitget']))
+        user_exchanges = set(user_data.get('active_exchanges', ['bybit', 'binance', 'bitget']))
         if exchange_name in user_exchanges:
             user_exchanges.remove(exchange_name)
         else:
@@ -576,7 +578,7 @@ class BotHandlers:
         query = update.callback_query
         user_id = query.from_user.id
         user_data = self.bot.user_manager.get_user_data(user_id)
-        user_exchanges = user_data.get('active_exchanges', ['bybit', 'bitget'])
+        user_exchanges = user_data.get('active_exchanges', ['bybit', 'binance', 'bitget'])
 
         await query.edit_message_text(
             f"📊 <b>Ваши активные биржи:</b> {', '.join([ex.title() for ex in user_exchanges])}",

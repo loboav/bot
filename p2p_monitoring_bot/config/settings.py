@@ -35,9 +35,9 @@ AUTO_MONITORING_INTERVAL = int(os.getenv("AUTO_MONITORING_INTERVAL", "120"))  # 
 AUTO_MONITORING_SAFE_INTERVAL = int(os.getenv("AUTO_MONITORING_SAFE_INTERVAL", "60"))  # минимум 1 минута
 MAX_NOTIFICATIONS_PER_HOUR = int(os.getenv("MAX_NOTIFICATIONS_PER_HOUR", "12"))  # не более 12 уведомлений в час
 
-# Bitget API настройки
-BITGET_API_KEY = os.getenv("BITGET_API_KEY", "bg_403603138a973f0ad8a26909b4fc4d06")
-BITGET_SECRET_KEY = os.getenv("BITGET_SECRET_KEY", "7913b66af2d5887e464e7f3ebc74bece1cdf16c37f30e2ed098b2cc12c331f6a")
+# Bitget API настройки (установите в .env файле)
+BITGET_API_KEY = os.getenv("BITGET_API_KEY", "")
+BITGET_SECRET_KEY = os.getenv("BITGET_SECRET_KEY", "")
 BITGET_PASSPHRASE = os.getenv("BITGET_PASSPHRASE", "")
 
 # Настройки по умолчанию для пользователей
@@ -50,11 +50,12 @@ DEFAULT_USER_SETTINGS = {
     'auto_monitoring_enabled': False,  # Автомониторинг выключен по умолчанию
     'last_notification_time': None,  # Время последнего уведомления
     'notification_count_hour': 0,    # Счетчик уведомлений за час
-    'active_exchanges': ['bybit', 'bitget']  # Теперь поддерживаем обе биржи
+    'active_exchanges': ['bybit', 'bitget', 'binance']  # Теперь поддерживаем три биржи
 }
 
 # URLs для бирж
 EXCHANGE_URLS = {
     'bybit': 'https://www.bybit.com/fiat/trade/otc/?actionType=1&token=USDT&fiat=UAH&paymentMethod=',
-    'bitget': 'https://www.bitget.com/ru/p2p-trade?paymethodIds=-1&fiatName=UAH'
+    'bitget': 'https://www.bitget.com/ru/p2p-trade?paymethodIds=-1&fiatName=UAH',
+    'binance': 'https://p2p.binance.com/ru/trade/all-payments/USDT?fiat=UAH'
 }

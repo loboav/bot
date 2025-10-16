@@ -19,6 +19,11 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 from .base_exchange import BaseExchange
+
+# Import settings with proper path handling
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from config.settings import BROWSER_HEADLESS, BROWSER_TIMEOUT, EXCHANGE_URLS
 
 logger = logging.getLogger(__name__)
@@ -198,18 +203,19 @@ class ByBitP2P(BaseExchange):
                                 pass
                             break
                     
-                    # Create offer with direct link
-                    offer = {
-                        'exchange': 'ByBit',
+                    # Создаем сырое предложение
+                    raw_offer = {
                         'username': username,
                         'price': price,
                         'available': available,
                         'min_amount': min_amount,
                         'max_amount': max_amount,
-                        'link': self.base_url,
-                        'direct_link': f"{self.base_url}&amount={available}&nickName={username}",
+                        'link': f"{self.base_url}&amount={available}&nickName={username}",
                         'timestamp': datetime.now().isoformat()
                     }
+                    
+                    # Нормализуем через базовый класс
+                    offer = self.normalize_offer(raw_offer)
                     
                     offers.append(offer)
                     
@@ -234,15 +240,30 @@ class ByBitP2P(BaseExchange):
         available = offer.get('available', 0)
         min_amount = offer.get('min_amount', 0)
         max_amount = offer.get('max_amount', 0)
-        direct_link = offer.get('direct_link', self.base_url)
+        link = offer.get('link', self.base_url)
         
         return f"""💰 <b>ByBit P2P Offer</b>
 👤 Пользователь: <b>{username}</b>
 💲 Цена: <b>{price:.2f} UAH</b> за USDT
 📊 Доступно: <b>{available:.1f} USDT</b>
 💳 Лимиты: {min_amount:.0f} - {max_amount:.0f} UAH
-🔗 Прямая ссылка: <a href='{direct_link}'>Купить у {username}</a>
+🔗 Прямая ссылка: <a href='{link}'>Купить у {username}</a>
 ⚡ Быстрая ссылка: {self.base_url}""".strip()
+    
+    def cleanup_if_needed(self):
+        """Smart cleanup - only if browser has been idle"""
+        if self.driver:
+            try:
+                # Проверяем, что браузер еще отвечает
+                self.driver.current_url  # Простая проверка
+            except Exception:
+                # Браузер не отвечает, очищаем
+                logger.warning("ByBit browser not responding, cleaning up")
+                try:
+                    self.driver.quit()
+                except:
+                    pass
+                self.driver = None
     
     def cleanup(self):
         """Clean up browser resources"""

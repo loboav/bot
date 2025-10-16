@@ -13,7 +13,12 @@ from typing import List, Dict, Any, Optional, Set
 from .base_exchange import BaseExchange
 from .bybit_p2p import ByBitP2P
 from .bitget_p2p import BitgetP2P
-from .placeholder_exchange import PlaceholderExchange
+from .binance_p2p import BinanceP2P
+
+# Import settings with proper path handling
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from config.settings import BITGET_API_KEY, BITGET_SECRET_KEY, BITGET_PASSPHRASE
 
 logger = logging.getLogger(__name__)
@@ -40,10 +45,9 @@ class ExchangeManager:
         )
         self._active_exchanges.add('bitget')
         
-        # Placeholder exchanges (ready for implementation)
-        placeholder_exchanges = ['okx', 'binance', 'mexc', 'bingx']
-        for exchange_name in placeholder_exchanges:
-            self._exchanges[exchange_name] = PlaceholderExchange(exchange_name.title())
+        # Initialize Binance P2P
+        self._exchanges['binance'] = BinanceP2P()
+        self._active_exchanges.add('binance')
     
     def get_exchange(self, name: str) -> Optional[BaseExchange]:
         """Get specific exchange instance"""
@@ -79,7 +83,11 @@ class ExchangeManager:
             if exchange_name in self._exchanges and exchange_name in self._active_exchanges:
                 try:
                     exchange = self._exchanges[exchange_name]
-                    offers = await exchange.get_offers()
+                    # Используем метод с таймаутом для лучшей обработки ошибок
+                    if hasattr(exchange, 'get_offers_with_timeout'):
+                        offers = await exchange.get_offers_with_timeout(30)  # 30 секунд таймаут
+                    else:
+                        offers = await exchange.get_offers()
                     
                     if offers:
                         for offer in offers:

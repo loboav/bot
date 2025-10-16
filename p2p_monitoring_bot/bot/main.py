@@ -34,10 +34,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import bot components
-from exchanges.exchange_manager import ExchangeManager
-from utils.user_manager import UserManager
-from utils.auto_monitor import AutoMonitor
-from handlers.bot_handlers import BotHandlers
+try:
+    # Try relative imports (when run as module)
+    from .exchanges.exchange_manager import ExchangeManager
+    from .utils.user_manager import UserManager
+    from .utils.auto_monitor import AutoMonitor
+    from .handlers.bot_handlers import BotHandlers
+except ImportError:
+    # Fallback to absolute imports (when run directly)
+    from exchanges.exchange_manager import ExchangeManager
+    from utils.user_manager import UserManager
+    from utils.auto_monitor import AutoMonitor
+    from handlers.bot_handlers import BotHandlers
 
 class P2PMonitoringBot:
     """Main bot class for P2P monitoring"""

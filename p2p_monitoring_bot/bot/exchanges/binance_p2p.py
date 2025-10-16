@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Bitget P2P Exchange Integration
-===============================
+Binance P2P Exchange Integration
+================================
 
-Real Bitget P2P data extraction using browser automation
+Real Binance P2P data extraction using browser automation
 """
 
 import asyncio
@@ -24,18 +24,18 @@ from .base_exchange import BaseExchange
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from config.settings import BROWSER_HEADLESS, BROWSER_TIMEOUT, EXCHANGE_URLS
+from config.settings import BROWSER_HEADLESS, BROWSER_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
-class BitgetP2P(BaseExchange):
-    """Bitget P2P integration with real browser data extraction"""
+class BinanceP2P(BaseExchange):
+    """Binance P2P integration with real browser data extraction"""
     
-    def __init__(self, api_key: str = None, secret_key: str = None, passphrase: str = None):
-        super().__init__("Bitget")
+    def __init__(self):
+        super().__init__("Binance")
         self.driver = None
         # Прямо заходим на страницу покупки USDT за UAH
-        self.base_url = "https://www.bitget.com/ru/p2p-trade?paymethodIds=-1&fiatName=UAH"
+        self.base_url = "https://p2p.binance.com/ru/trade/all-payments/USDT?fiat=UAH"
         
     def setup_browser(self):
         """Setup Chrome browser with optimized settings"""
@@ -78,20 +78,20 @@ class BitgetP2P(BaseExchange):
             self.driver = webdriver.Chrome(options=chrome_options)
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
-            logger.info("Bitget browser setup successful")
+            logger.info("Binance browser setup successful")
             return True
             
         except Exception as e:
-            logger.error(f"Bitget browser setup failed: {e}")
+            logger.error(f"Binance browser setup failed: {e}")
             return False
     
     async def get_offers(self) -> List[Dict[str, Any]]:
-        """Extract real P2P offers from Bitget website - OPTIMIZED VERSION"""
+        """Extract real P2P offers from Binance website - OPTIMIZED VERSION"""
         # Check cache first (5 minutes TTL) 
         if self.offers_cache and self.last_update:
             from datetime import timedelta
             if datetime.now() - self.last_update < timedelta(minutes=5):
-                logger.info(f"Using cached Bitget data ({len(self.offers_cache)} offers)")
+                logger.info(f"Using cached Binance data ({len(self.offers_cache)} offers)")
                 return self.offers_cache
         
         if not self.setup_browser():
@@ -99,7 +99,7 @@ class BitgetP2P(BaseExchange):
             return self.offers_cache
             
         try:
-            logger.info("Fetching Bitget P2P offers... (FAST MODE)")
+            logger.info("Fetching Binance P2P offers... (FAST MODE)")
             start_time = datetime.now()
             
             # Navigate to P2P page
@@ -124,7 +124,7 @@ class BitgetP2P(BaseExchange):
             
             # Extract offers from page text AND HTML - OPTIMIZED
             page_text = self.driver.find_element(By.TAG_NAME, "body").text
-            page_source = self.driver.page_source  # Get HTML for user IDs
+            page_source = self.driver.page_source  # Get HTML for potential user IDs
             offers = self.parse_offers_from_page_text(page_text, page_source)
             
             # Calculate timing
@@ -134,28 +134,24 @@ class BitgetP2P(BaseExchange):
             if offers:
                 self.offers_cache = offers
                 self.last_update = datetime.now()
-                logger.info(f"Bitget: Successfully extracted {len(offers)} offers in {duration:.1f}s (FAST!)")
+                logger.info(f"Binance: Successfully extracted {len(offers)} offers in {duration:.1f}s (FAST!)")
             else:
-                logger.warning(f"No offers extracted from Bitget page (took {duration:.1f}s)")
+                logger.warning(f"No offers extracted from Binance page (took {duration:.1f}s)")
             
             return offers if offers else self.offers_cache
             
         except Exception as e:
-            logger.error(f"Bitget offers fetch failed: {e}")
+            logger.error(f"Binance offers fetch failed: {e}")
             return self.offers_cache
     
     def parse_offers_from_page_text(self, page_text: str, page_source: str = "") -> List[Dict[str, Any]]:
-        """Parse P2P offers from Bitget page text and HTML using real structure"""
+        """Parse P2P offers from Binance page text using real structure"""
         offers = []
         
         try:
             lines = page_text.split('\n')
             
-            # Extract user IDs from HTML source
-            user_ids = re.findall(r'/p2p-trade/user/([a-f0-9]+)', page_source) if page_source else []
-            logger.info(f"Found {len(user_ids)} user IDs in HTML")
-            
-            # Найдем все цены в USD (как в дебаг выводе)
+            # Найдем все цены в UAH формате Binance
             price_patterns = []
             username_patterns = []
             usdt_patterns = []
@@ -166,46 +162,72 @@ class BitgetP2P(BaseExchange):
                 if not line:
                     continue
                     
-                # Поиск цен в формате UAH: "43.4 UAH", "43.44 UAH" итд
-                price_match = re.match(r'^([\d\.]+)\s+UAH$', line)
-                if price_match:
-                    price_patterns.append((i, line, float(price_match.group(1))))
+                # Поиск цен в формате UAH: приоритет с символом валюты
+                # 1. С символом гривны: "₴ 44.00", "₴ 42.50" и т.д.
+                price_match_uah = re.match(r'^₴\s*([3-5][0-9](?:\.\d{1,2})?)$', line)
+                # 2. С текстом UAH: "44.00 UAH", "42.50 UAH"
+                price_match_text = re.match(r'^([3-5][0-9](?:\.\d{1,2})?)\s*UAH$', line, re.IGNORECASE)
+                # 3. Последняя попытка: голые числа в диапазоне, но с осторожностью
+                price_match_naked = re.match(r'^([4-5][0-9](?:\.\d{1,2})?)$', line) if not (price_match_uah or price_match_text) else None
                 
-                # Поиск USDT в формате: "11,699.67 USDT"
-                usdt_match = re.match(r'^([\d,\.]+)\s+USDT$', line)
+                price_match = price_match_uah or price_match_text or price_match_naked
+                if price_match:
+                    try:
+                        price_uah = float(price_match.group(1))
+                        # Приоритет ценам с валютными маркерами
+                        priority = 0  # высокий приоритет
+                        if price_match_uah:
+                            priority = 0  # наивысший приоритет
+                        elif price_match_text:
+                            priority = 1  # средний приоритет
+                        elif price_match_naked:
+                            priority = 2  # низкий приоритет
+                        
+                        if 35.0 <= price_uah <= 55.0:  # Разумные пределы для USDT-UAH
+                            price_patterns.append((i, line, price_uah, priority))
+                    except ValueError:
+                        pass
+                
+                # Поиск USDT в формате: "16,406.53 USDT", "4,987.94 USDT"
+                usdt_match = re.search(r'([0-9,]+\.?\d*)\s*USDT', line)
                 if usdt_match:
                     try:
                         amount = float(usdt_match.group(1).replace(',', ''))
-                        usdt_patterns.append((i, line, amount))
+                        if amount > 10:  # Минимальное разумное количество
+                            usdt_patterns.append((i, line, amount))
                     except ValueError:
                         pass
                 
-                # Поиск лимитов в UAH: "6,000-6,510 UAH", "1,950-3,784 UAH"
-                limit_match = re.match(r'^([\d,]+)[\u2013—-]([\d,]+)\s+UAH$', line)
-                if limit_match:
+                # Поиск лимитов в UAH: Binance сторона часто показывает отдельные строки для мин/макс
+                single_limit_match = re.match(r'^([0-9,]+\.?\d*)\s*UAH$', line)
+                if single_limit_match:
                     try:
-                        min_limit = float(limit_match.group(1).replace(',', ''))
-                        max_limit = float(limit_match.group(2).replace(',', ''))
-                        limit_patterns.append((i, line, min_limit, max_limit))
+                        limit_value = float(single_limit_match.group(1).replace(',', ''))
+                        if limit_value >= 100:  # Минимальная разумность
+                            limit_patterns.append((i, line, limit_value))
                     except ValueError:
                         pass
                 
-                # Поиск полных имен пользователей (как CloverSiS, RUS_Bank, BabayGoFast)
+                # Поиск имен пользователей (предполагаем что это строки 3-20 символов с буквами/цифрами)
                 if (3 <= len(line) <= 25 and 
-                    re.match(r'^[A-Za-z0-9_]+$', line) and 
-                    line not in ['USD', 'USDT', 'UAH'] and
-                    'Успешные' not in line):
+                    re.match(r'^[A-Za-z0-9_\-@.]+$', line) and 
+                    line not in ['USDT', 'UAH', 'USD', 'BTC', 'ETH', 'BNB'] and
+                    'UAH' not in line and 'USDT' not in line and
+                    not re.match(r'^[0-9,.\s]+$', line)):  # Не только числа
                     username_patterns.append((i, line))
             
             logger.info(f"Found {len(price_patterns)} price patterns, {len(usdt_patterns)} USDT patterns, {len(limit_patterns)} limit patterns, {len(username_patterns)} usernames")
             
+            # Сортируем по приоритету (0 = наивысший)
+            price_patterns.sort(key=lambda x: x[3] if len(x) > 3 else 0)
+            
             # Сопоставляем данные по позиции в тексте
-            for offer_idx, (price_idx, price_line, price_uah) in enumerate(price_patterns[:15]):
+            for offer_idx, price_info in enumerate(price_patterns[:15]):
+                price_idx, price_line, price_uah = price_info[0], price_info[1], price_info[2]
                 try:
-                    # Цена уже в UAH, конвертация не нужна
-                    # price_uah уже готова
+                    # Цена уже в UAH
                     
-                    # Ищем ближайшее полное имя пользователя
+                    # Ищем ближайшее имя пользователя
                     username = "Unknown"
                     min_distance = float('inf')
                     
@@ -215,9 +237,6 @@ class BitgetP2P(BaseExchange):
                         if distance < min_distance and distance <= 20:
                             username = user_name
                             min_distance = distance
-                    
-                    # Получаем соответствующий user ID для прямой ссылки
-                    user_id = user_ids[offer_idx] if offer_idx < len(user_ids) else None
                     
                     # Ищем ближайшее количество USDT
                     usdt_amount = 0.0
@@ -229,16 +248,23 @@ class BitgetP2P(BaseExchange):
                             usdt_amount = amount
                             min_distance = distance
                     
-                    # Ищем ближайшие лимиты в UAH
-                    min_limit_uah, max_limit_uah = 0.0, 0.0
-                    min_distance = float('inf')
+                    # Ищем ближайшие лимиты в UAH (отдельные значения)
+                    limits_nearby = []
                     
-                    for limit_idx, limit_line, min_lim, max_lim in limit_patterns:
+                    for limit_idx, limit_line, limit_value in limit_patterns:
                         distance = abs(limit_idx - price_idx)
-                        if distance < min_distance and distance <= 15:
-                            min_limit_uah = min_lim
-                            max_limit_uah = max_lim
-                            min_distance = distance
+                        if distance <= 15:  # В пределах 15 строк
+                            limits_nearby.append((distance, limit_value))
+                    
+                    # Сортируем по расстоянию и берем первые два
+                    limits_nearby.sort(key=lambda x: x[0])
+                    
+                    min_limit_uah = limits_nearby[0][1] if limits_nearby else 1000.0
+                    max_limit_uah = limits_nearby[1][1] if len(limits_nearby) > 1 else min_limit_uah * 10
+                    
+                    # Если мин больше макс, поменяем местами
+                    if min_limit_uah > max_limit_uah:
+                        min_limit_uah, max_limit_uah = max_limit_uah, min_limit_uah
                     
                     # Используем значения по умолчанию если не нашли
                     if min_limit_uah == 0.0:
@@ -246,15 +272,9 @@ class BitgetP2P(BaseExchange):
                     if max_limit_uah == 0.0:
                         max_limit_uah = 100000.0
                     
-                    # Создаем предложение с правильными полями для совместимости с ботом
-                    
-                    # Формируем ссылки
-                    if user_id:
-                        # Прямая ссылка на конкретного пользователя (ТО ЧТО НАДО!)
-                        trade_url = f"https://www.bitget.com/ru/p2p-trade/user/{user_id}"
-                    else:
-                        # Fallback к старому формату
-                        trade_url = f"https://www.bitget.com/ru/p2p-trade?fiatName={username}"
+                    # Пропускаем предложения без распознанного имени (часто это промо-блоки)
+                    if username == "Unknown":
+                        continue
                     
                     # Создаем сырое предложение
                     raw_offer = {
@@ -263,7 +283,7 @@ class BitgetP2P(BaseExchange):
                         'available': usdt_amount if usdt_amount > 0 else 100.0,
                         'min_amount': min_limit_uah,
                         'max_amount': max_limit_uah,
-                        'link': trade_url,
+                        'link': f"{self.base_url}&merchant={username}&amount={usdt_amount if usdt_amount > 0 else 100}",
                         'timestamp': datetime.now().isoformat()
                     }
                     
@@ -287,15 +307,15 @@ class BitgetP2P(BaseExchange):
             return []
     
     def format_offer_message(self, offer: Dict[str, Any]) -> str:
-        """Формат Bitget offer for user notification"""
+        """Format Binance offer with direct link for user convenience"""
         username = offer.get('username', 'Unknown')
         price = offer.get('price', 0)
         available = offer.get('available', 0)
         min_amount = offer.get('min_amount', 0)
         max_amount = offer.get('max_amount', 0)
-        link = offer.get('link', "https://www.bitget.com/ru/otc")
+        link = offer.get('link', self.base_url)
         
-        return f"""💰 <b>Bitget P2P Offer</b>
+        return f"""💰 <b>Binance P2P Offer</b>
 👤 Пользователь: <b>{username}</b>
 💲 Цена: <b>{price:.2f} UAH</b> за USDT
 📊 Доступно: <b>{available:.1f} USDT</b>
@@ -311,7 +331,7 @@ class BitgetP2P(BaseExchange):
                 self.driver.current_url
             except Exception:
                 # Браузер не отвечает, очищаем
-                logger.warning("Bitget browser not responding, cleaning up")
+                logger.warning("Binance browser not responding, cleaning up")
                 try:
                     self.driver.quit()
                 except:
@@ -324,6 +344,6 @@ class BitgetP2P(BaseExchange):
             try:
                 self.driver.quit()
                 self.driver = None
-                logger.info("Bitget browser cleaned up")
+                logger.info("Binance browser cleaned up")
             except Exception as e:
                 logger.error(f"Error cleaning up browser: {e}")
