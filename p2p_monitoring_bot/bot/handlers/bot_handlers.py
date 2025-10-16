@@ -7,6 +7,7 @@ Telegram bot command handlers for P2P monitoring
 """
 
 import asyncio
+from typing import Dict, Any
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
@@ -28,18 +29,20 @@ class BotHandlers:
 
 Этот бот отслеживает курсы USDT-UAH на P2P биржах и уведомляет о выгодных предложениях.
 
-📊 <b>Доступные биржи:</b>
-✅ ByBit (реальные данные с прямыми ссылками)
+🏦 <b>Доступные биржи:</b>
+✅ ByBit (реальные данные через браузер)
+✅ Bitget (реальные данные через API)
 🔄 OKX, Binance, MEXC (скоро)
 
 ⚙️ <b>Команды:</b>
-/check - Проверить текущие предложения
+/check - Проверить предложения с всех активных бирж
+/exchanges - Выбрать биржи для мониторинга
 /settings - Настроить диапазон курса и автомониторинг
 /status - Показать текущие настройки
 /help - Показать все команды
 🤖 /automonitor - Управление автомониторингом
 
-💡 <b>Начните с команды /check для просмотра текущих предложений!</b>
+💡 <b>Начните с /check для просмотра предложений!</b>
         """.strip()
         
         await update.message.reply_text(welcome_message, parse_mode='HTML')
@@ -53,24 +56,28 @@ class BotHandlers:
         )
     
     async def check_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /check command - show current offers"""
+        """Handle /check command - show current offers from all active exchanges"""
         user_id = update.effective_user.id
         user_data = self.bot.user_manager.get_user_data(user_id)
         
+        # Get active exchanges for user
+        active_exchanges = user_data.get('active_exchanges', ['bybit', 'bitget'])
+        
         # Send "checking" message
-        checking_msg = await update.message.reply_text("🔍 Проверяю текущие P2P предложения...\n⏳ Это может занять 15-20 секунд")
+        exchanges_text = ", ".join([ex.title() for ex in active_exchanges])
+        checking_msg = await update.message.reply_text(
+            f"🔍 Проверяю P2P предложения на: {exchanges_text}...\n⏳ Это может занять 15-30 секунд"
+        )
         
         try:
-            # Get offers from ByBit through exchange manager
-            bybit_exchange = self.bot.exchange_manager.get_exchange('bybit')
-            if not bybit_exchange:
-                await checking_msg.edit_text("❌ ByBit недоступен. Попробуйте позже.")
-                return
-            
-            offers = await bybit_exchange.get_offers()
+            # Get combined offers from all active exchanges
+            offers = await self.bot.exchange_manager.get_combined_offers(active_exchanges)
             
             if not offers:
-                await checking_msg.edit_text("❌ Не удалось получить предложения. Попробуйте позже.")
+                await checking_msg.edit_text(
+                    f"❌ Не удалось получить предложения с {exchanges_text}.\n"
+                    "🔧 Попробуйте позже или используйте /exchanges для смены бирж."
+                )
                 return
             
             # Filter offers by user's rate range AND limits
@@ -96,7 +103,15 @@ class BotHandlers:
                 min_price = min(all_prices) if all_prices else 0
                 max_price = max(all_prices) if all_prices else 0
                 
-                response = f"📊 <b>Найдено {len(offers)} предложений</b>, но ни одно не подходит по вашим критериям:\n\n"
+                # Count offers by exchange
+                exchange_counts = {}
+                for offer in offers:
+                    exchange = offer.get('exchange', 'Unknown')
+                    exchange_counts[exchange] = exchange_counts.get(exchange, 0) + 1
+                
+                count_text = ", ".join([f"{ex.title()}: {count}" for ex, count in exchange_counts.items()])
+                
+                response = f"📅 <b>Найдено {len(offers)} предложений</b> ({count_text}), но ни одно не подходит по вашим критериям:\n\n"
                 response += f"💰 Ваш диапазон цен: <b>{user_data['min_rate']:.2f}-{user_data['max_rate']:.2f} UAH</b>\n"
                 response += f"💳 Ваши лимиты: <b>{user_data.get('min_limit', 5000):.0f}-{user_data.get('max_limit', 100000):.0f} UAH</b>\n\n"
                 response += f"💡 Доступные цены: <b>{min_price:.2f} - {max_price:.2f} UAH</b>\n\n"
@@ -105,11 +120,28 @@ class BotHandlers:
                 # Sort by price (best offers first)
                 filtered_offers.sort(key=lambda x: x['price'])
                 
-                response = f"💎 <b>Найдено {len(filtered_offers)} предложений в вашем диапазоне:</b>\n\n"
+                # Count filtered offers by exchange
+                exchange_counts = {}
+                for offer in filtered_offers:
+                    exchange = offer.get('exchange', 'Unknown')
+                    exchange_counts[exchange] = exchange_counts.get(exchange, 0) + 1
                 
-                # Show top 5 offers
+                count_text = ", ".join([f"{ex.title()}: {count}" for ex, count in exchange_counts.items()])
+                
+                response = f"💎 <b>Найдено {len(filtered_offers)} предложений</b> ({count_text}) в вашем диапазоне:\n\n"
+                
+                # Show top 5 offers with exchange info
                 for i, offer in enumerate(filtered_offers[:5], 1):
-                    offer_text = bybit_exchange.format_offer_message(offer)
+                    # Get the appropriate exchange to format the message
+                    exchange_name = offer.get('exchange', 'bybit')
+                    exchange = self.bot.exchange_manager.get_exchange(exchange_name)
+                    
+                    if exchange:
+                        offer_text = exchange.format_offer_message(offer)
+                    else:
+                        # Fallback formatting
+                        offer_text = self._format_generic_offer(offer)
+                    
                     response += f"<b>{i}.</b> {offer_text}\n\n"
                 
                 if len(filtered_offers) > 5:
@@ -141,7 +173,7 @@ class BotHandlers:
 💰 <b>Диапазон курса:</b> {user_data['min_rate']:.2f} - {user_data['max_rate']:.2f} UAH
 💳 <b>Лимиты сделок:</b> {user_data.get('min_limit', 5000):.0f} - {user_data.get('max_limit', 100000):.0f} UAH
 🤖 <b>Автомониторинг:</b> {'✅ Включен' if user_data.get('auto_monitoring_enabled', False) else '❌ Выключен'}
-🏦 <b>Активные биржи:</b> ByBit
+🏦 <b>Активные биржи:</b> {', '.join([ex.title() for ex in user_data.get('active_exchanges', ['bybit', 'bitget'])])}
 🔔 <b>Уведомления:</b> {'✅ Включены' if user_data['notifications_enabled'] else '❌ Выключены'}
 
 Выберите что настроить:
@@ -166,8 +198,11 @@ class BotHandlers:
 🔔 <b>Уведомления:</b> {'✅ Включены' if user_data['notifications_enabled'] else '❌ Выключены'}
 
 🏦 <b>Биржи:</b>
-✅ ByBit - активна
+✅ ByBit - активна (браузер)
+✅ Bitget - активна (API)
 🔄 OKX, Binance, MEXC - скоро
+
+🏦 <b>Ваши активные:</b> {', '.join([ex.title() for ex in user_data.get('active_exchanges', ['bybit', 'bitget'])])}
 
 ⏰ <b>Время проверки:</b> {context.application.bot.start_time if hasattr(context.application.bot, 'start_time') else 'N/A'}
         """.strip()
@@ -182,6 +217,7 @@ class BotHandlers:
 🏠 <b>/start</b> - Приветствие и инструкция
 📱 <b>/menu</b> - Показать меню команд
 🔍 <b>/check</b> - Проверить текущие P2P предложения
+🏦 <b>/exchanges</b> - Выбрать биржи для мониторинга
 ⚙️ <b>/settings</b> - Настроить диапазон курса и автомониторинг
 🤖 <b>/automonitor</b> - Управление автомониторингом
 📊 <b>/status</b> - Показать текущие настройки
@@ -240,6 +276,13 @@ class BotHandlers:
             
         elif query.data == "show_status":
             await self.status_command(update, context)
+            
+        elif query.data.startswith("toggle_exchange_"):
+            exchange_name = query.data.replace("toggle_exchange_", "")
+            await self._handle_exchange_toggle(update, context, exchange_name)
+            
+        elif query.data == "show_exchanges_status":
+            await self._show_exchanges_status(update, context)
     
     async def message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle text messages"""
@@ -422,13 +465,123 @@ class BotHandlers:
         
         await query.edit_message_text(status_text, reply_markup=reply_markup, parse_mode='HTML')
     
+    def _format_generic_offer(self, offer: Dict[str, Any]) -> str:
+        """Generic offer formatting for fallback"""
+        username = offer.get('username', 'Unknown')
+        price = offer.get('price', 0)
+        available = offer.get('available', 0)
+        min_amount = offer.get('min_amount', 0)
+        max_amount = offer.get('max_amount', 0)
+        exchange = offer.get('exchange', 'Unknown').title()
+        link = offer.get('link', '#')
+        
+        return f"""💰 <b>{exchange} P2P Offer</b>
+👤 Пользователь: <b>{username}</b>
+💲 Цена: <b>{price:.2f} UAH</b> за USDT
+📊 Доступно: <b>{available:.1f} USDT</b>
+💳 Лимиты: {min_amount:.0f} - {max_amount:.0f} UAH
+🔗 Ссылка: <a href='{link}'>Перейти на {exchange}</a>""".strip()
+    
+    async def exchanges_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /exchanges command - manage active exchanges"""
+        user_id = update.effective_user.id
+        user_data = self.bot.user_manager.get_user_data(user_id)
+        
+        available_exchanges = self.bot.exchange_manager.get_available_exchanges()
+        active_exchanges = self.bot.exchange_manager.get_active_exchanges()
+        user_exchanges = user_data.get('active_exchanges', ['bybit', 'bitget'])
+        
+        # Create keyboard with exchange toggles
+        keyboard = []
+        for exchange in active_exchanges:
+            is_enabled = exchange in user_exchanges
+            status_icon = "✅" if is_enabled else "❌"
+            keyboard.append([InlineKeyboardButton(
+                f"{status_icon} {exchange.title()}",
+                callback_data=f"toggle_exchange_{exchange}"
+            )])
+        
+        keyboard.append([InlineKeyboardButton("📊 Показать статус", callback_data="show_exchanges_status")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        exchanges_text = f"""
+🏦 <b>Управление биржами</b>
+
+💡 <b>Доступные биржи:</b>
+{chr(10).join([f"• {ex.title()}" for ex in active_exchanges])}
+
+✅ <b>Ваши активные биржи:</b>
+{chr(10).join([f"• {ex.title()}" for ex in user_exchanges]) if user_exchanges else "Не выбрано"}
+
+🔧 <b>Управление:</b>
+Нажмите на кнопки ниже чтобы включить/выключить биржи для мониторинга.
+
+💡 <b>Рекомендация:</b> Используйте несколько бирж для лучших результатов!
+        """.strip()
+        
+        await update.message.reply_text(exchanges_text, reply_markup=reply_markup, parse_mode='HTML')
+    
     def build_main_reply_keyboard(self):
         """Build a reply keyboard with main commands"""
         keyboard_layout = [
             [KeyboardButton('/check'), KeyboardButton('/settings')],
-            [KeyboardButton('/status'), KeyboardButton('/help')]
+            [KeyboardButton('/exchanges'), KeyboardButton('/status')],
+            [KeyboardButton('/help')]
         ]
         return ReplyKeyboardMarkup(keyboard_layout, resize_keyboard=True)
+
+    async def _handle_exchange_toggle(self, update: Update, context: ContextTypes.DEFAULT_TYPE, exchange_name: str):
+        """Toggle specific exchange for the user"""
+        query = update.callback_query
+        user_id = query.from_user.id
+        user_data = self.bot.user_manager.get_user_data(user_id)
+
+        active_exchanges = self.bot.exchange_manager.get_active_exchanges()
+        if exchange_name not in active_exchanges:
+            await query.edit_message_text(f"❌ Биржа {exchange_name.title()} недоступна")
+            return
+
+        user_exchanges = set(user_data.get('active_exchanges', ['bybit', 'bitget']))
+        if exchange_name in user_exchanges:
+            user_exchanges.remove(exchange_name)
+        else:
+            user_exchanges.add(exchange_name)
+
+        # Persist user setting
+        self.bot.user_manager.update_user_data(user_id, {
+            'active_exchanges': list(user_exchanges)
+        })
+
+        # Rebuild keyboard
+        keyboard = []
+        for ex in active_exchanges:
+            is_enabled = ex in user_exchanges
+            status_icon = "✅" if is_enabled else "❌"
+            keyboard.append([InlineKeyboardButton(
+                f"{status_icon} {ex.title()}",
+                callback_data=f"toggle_exchange_{ex}"
+            )])
+        keyboard.append([InlineKeyboardButton("📊 Показать статус", callback_data="show_exchanges_status")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(
+            f"🏦 <b>Биржи обновлены</b>\n\n"
+            f"✅ Активные: {', '.join([ex.title() for ex in sorted(user_exchanges)]) if user_exchanges else 'нет'}\n\n"
+            f"Нажмите кнопки, чтобы переключать.",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+
+    async def _show_exchanges_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        user_id = query.from_user.id
+        user_data = self.bot.user_manager.get_user_data(user_id)
+        user_exchanges = user_data.get('active_exchanges', ['bybit', 'bitget'])
+
+        await query.edit_message_text(
+            f"📊 <b>Ваши активные биржи:</b> {', '.join([ex.title() for ex in user_exchanges])}",
+            parse_mode='HTML'
+        )
 
     async def menu_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show main command menu on demand"""
@@ -444,6 +597,7 @@ class BotHandlers:
         application.add_handler(CommandHandler("start", self.start_command))
         application.add_handler(CommandHandler("menu", self.menu_command))
         application.add_handler(CommandHandler("check", self.check_command))
+        application.add_handler(CommandHandler("exchanges", self.exchanges_command))
         application.add_handler(CommandHandler("settings", self.settings_command))
         application.add_handler(CommandHandler("automonitor", self.automonitor_command))
         application.add_handler(CommandHandler("status", self.status_command))

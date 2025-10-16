@@ -12,7 +12,9 @@ from typing import List, Dict, Any, Optional, Set
 
 from .base_exchange import BaseExchange
 from .bybit_p2p import ByBitP2P
+from .bitget_p2p import BitgetP2P
 from .placeholder_exchange import PlaceholderExchange
+from config.settings import BITGET_API_KEY, BITGET_SECRET_KEY, BITGET_PASSPHRASE
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +28,20 @@ class ExchangeManager:
     
     def _initialize_exchanges(self):
         """Initialize all available exchanges"""
-        # Active exchange
+        # Active exchanges
         self._exchanges['bybit'] = ByBitP2P()
         self._active_exchanges.add('bybit')
         
+        # Initialize Bitget with API credentials
+        self._exchanges['bitget'] = BitgetP2P(
+            api_key=BITGET_API_KEY,
+            secret_key=BITGET_SECRET_KEY, 
+            passphrase=BITGET_PASSPHRASE
+        )
+        self._active_exchanges.add('bitget')
+        
         # Placeholder exchanges (ready for implementation)
-        placeholder_exchanges = ['okx', 'binance', 'mexc', 'bitget', 'bingx']
+        placeholder_exchanges = ['okx', 'binance', 'mexc', 'bingx']
         for exchange_name in placeholder_exchanges:
             self._exchanges[exchange_name] = PlaceholderExchange(exchange_name.title())
     

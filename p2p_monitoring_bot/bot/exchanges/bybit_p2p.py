@@ -63,6 +63,11 @@ class ByBitP2P(BaseExchange):
             chrome_options.add_argument('--disable-renderer-backgrounding')
             chrome_options.add_argument('--disable-default-apps')
             chrome_options.add_argument('--disable-sync')
+            chrome_options.add_argument('--disable-gpu')  # No GPU acceleration needed
+            chrome_options.add_argument('--disable-css3-animations')
+            chrome_options.add_argument('--disable-smooth-scrolling')
+            chrome_options.add_argument('--memory-pressure-off')
+            chrome_options.add_argument('--disable-logging')
             
             self.driver = webdriver.Chrome(options=chrome_options)
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")

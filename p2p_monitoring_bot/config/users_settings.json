@@ -1,41 +1,61 @@
 {
   "12345": {
-    "min_rate": 41.0,
-    "max_rate": 42.5,
+    "min_rate": 35.0,
+    "max_rate": 43.0,
+    "min_limit": 5000.0,
+    "max_limit": 100000.0,
     "notifications_enabled": true,
+    "auto_monitoring_enabled": false,
+    "last_notification_time": null,
+    "notification_count_hour": 0,
     "active_exchanges": [
-      "bybit"
+      "bybit",
+      "bitget"
     ],
     "last_notification": null
   },
-  "99999": {
-    "min_rate": 40.0,
-    "max_rate": 44.0,
+  "999999": {
+    "min_rate": 35.0,
+    "max_rate": 43.0,
+    "min_limit": 5000.0,
+    "max_limit": 100000.0,
     "notifications_enabled": true,
+    "auto_monitoring_enabled": false,
+    "last_notification_time": null,
+    "notification_count_hour": 0,
     "active_exchanges": [
-      "bybit"
+      "bybit",
+      "bitget"
     ],
-    "last_notification": null,
-    "min_limit": 10000.0,
-    "max_limit": 50000.0
+    "last_notification": null
   },
   "667486426": {
     "min_rate": 35.0,
     "max_rate": 44.0,
+    "min_limit": 100.0,
+    "max_limit": 90000.0,
     "notifications_enabled": true,
+    "auto_monitoring_enabled": true,
+    "last_notification_time": "2025-10-16T13:09:23.340590",
+    "notification_count_hour": 10,
     "active_exchanges": [
-      "bybit"
+      "bybit",
+      "bitget"
     ],
-    "last_notification": null,
-    "min_limit": 700.0,
-    "max_limit": 13000.0
+    "last_notification": null
   },
-  "1149703375": {
+  "123456789": {
     "min_rate": 35.0,
-    "max_rate": 41.0,
+    "max_rate": 43.0,
+    "min_limit": 5000.0,
+    "max_limit": 100000.0,
     "notifications_enabled": true,
+    "auto_monitoring_enabled": false,
+    "last_notification_time": null,
+    "notification_count_hour": 0,
     "active_exchanges": [
-      "bybit"
+      "bybit",
+      "bitget"
     ],
     "last_notification": null
   }
