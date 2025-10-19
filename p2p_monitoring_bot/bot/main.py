@@ -63,14 +63,15 @@ class P2PMonitoringBot:
         
         logger.info(f"🚀 Initialized P2P bot with {self.exchange_manager}")
         
-    async def get_offers_for_user(self, user_id: int) -> List[Dict[str, Any]]:
+    async def get_offers_for_user(self, user_id: int, force_refresh: bool = False) -> List[Dict[str, Any]]:
         """Get offers for specific user based on their settings"""
         user_data = self.user_manager.get_user_data(user_id)
         
         # Get offers from user's active exchanges through manager
         try:
             all_offers = await self.exchange_manager.get_combined_offers(
-                exchange_names=user_data['active_exchanges']
+                exchange_names=user_data['active_exchanges'],
+                force_refresh=force_refresh
             )
         except Exception as e:
             logger.error(f"Error getting combined offers: {e}")

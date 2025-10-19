@@ -73,6 +73,7 @@ class ByBitP2P(BaseExchange):
             chrome_options.add_argument('--disable-smooth-scrolling')
             chrome_options.add_argument('--memory-pressure-off')
             chrome_options.add_argument('--disable-logging')
+            chrome_options.add_argument('--enable-unsafe-swiftshader')  # Fix WebGL warnings
             
             self.driver = webdriver.Chrome(options=chrome_options)
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -84,10 +85,10 @@ class ByBitP2P(BaseExchange):
             logger.error(f"ByBit browser setup failed: {e}")
             return False
     
-    async def get_offers(self) -> List[Dict[str, Any]]:
+    async def get_offers(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
         """Extract real P2P offers from ByBit website - OPTIMIZED VERSION"""
-        # Check cache first (5 minutes TTL) 
-        if self.offers_cache and self.last_update:
+        # Check cache first (5 minutes TTL) unless force refresh is requested
+        if not force_refresh and self.offers_cache and self.last_update:
             from datetime import timedelta
             if datetime.now() - self.last_update < timedelta(minutes=5):
                 logger.info(f"Using cached ByBit data ({len(self.offers_cache)} offers)")
@@ -98,7 +99,8 @@ class ByBitP2P(BaseExchange):
             return self.offers_cache
             
         try:
-            logger.info("Fetching ByBit P2P offers... (FAST MODE)")
+            mode_text = "FRESH DATA" if force_refresh else "FAST MODE"
+            logger.info(f"Fetching ByBit P2P offers... ({mode_text})")
             start_time = datetime.now()
             
             # Navigate to P2P page

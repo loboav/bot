@@ -36,14 +36,14 @@ class BotHandlers:
 🔄 OKX, MEXC, BingX (скоро)
 
 ⚙️ <b>Команды:</b>
-/check - Проверить предложения с всех активных бирж
+/check - Получить СВЕЖИЕ предложения с всех активных бирж
 /exchanges - Выбрать биржи для мониторинга
 /settings - Настроить диапазон курса и автомониторинг
 /status - Показать текущие настройки
 /help - Показать все команды
 🤖 /automonitor - Управление автомониторингом
 
-💡 <b>Начните с /check для просмотра предложений!</b>
+💡 <b>Начните с /check для получения СВЕЖИХ предложений!</b>
         """.strip()
         
         await update.message.reply_text(welcome_message, parse_mode='HTML')
@@ -67,12 +67,12 @@ class BotHandlers:
         # Send "checking" message
         exchanges_text = ", ".join([ex.title() for ex in active_exchanges])
         checking_msg = await update.message.reply_text(
-            f"🔍 Проверяю P2P предложения на: {exchanges_text}...\n⏳ Это может занять 15-30 секунд"
+            f"🔄 Получаю СВЕЖИЕ данные с: {exchanges_text}...\n⏳ Это может занять 15-30 секунд"
         )
         
         try:
-            # Get combined offers from all active exchanges
-            offers = await self.bot.exchange_manager.get_combined_offers(active_exchanges)
+            # Get combined offers from all active exchanges with FORCE REFRESH
+            offers = await self.bot.exchange_manager.get_combined_offers(active_exchanges, force_refresh=True)
             
             if not offers:
                 await checking_msg.edit_text(
@@ -129,7 +129,7 @@ class BotHandlers:
                 
                 count_text = ", ".join([f"{ex.title()}: {count}" for ex, count in exchange_counts.items()])
                 
-                response = f"💎 <b>Найдено {len(filtered_offers)} предложений</b> ({count_text}) в вашем диапазоне:\n\n"
+                response = f"💎 <b>Найдено {len(filtered_offers)} СВЕЖИХ предложений</b> ({count_text}) в вашем диапазоне:\n\n"
                 
                 # Show top 5 offers with exchange info
                 for i, offer in enumerate(filtered_offers[:5], 1):
@@ -148,7 +148,7 @@ class BotHandlers:
                 if len(filtered_offers) > 5:
                     response += f"... и еще {len(filtered_offers) - 5} предложений\n\n"
                 
-                response += "💡 Нажмите на прямые ссылки для быстрой покупки!"
+                response += "💡 Нажмите на прямые ссылки для быстрой покупки!\n🔄 Данные обновлены только что!"
             
             await checking_msg.edit_text(response, parse_mode='HTML', disable_web_page_preview=True)
             
@@ -218,7 +218,7 @@ class BotHandlers:
 
 🏠 <b>/start</b> - Приветствие и инструкция
 📱 <b>/menu</b> - Показать меню команд
-🔍 <b>/check</b> - Проверить текущие P2P предложения
+🔍 <b>/check</b> - Получить СВЕЖИЕ P2P предложения (без кэша)
 🏦 <b>/exchanges</b> - Выбрать биржи для мониторинга
 ⚙️ <b>/settings</b> - Настроить диапазон курса и автомониторинг
 🤖 <b>/automonitor</b> - Управление автомониторингом

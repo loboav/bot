@@ -23,8 +23,12 @@ class BaseExchange(ABC):
         self.offers_cache = []
     
     @abstractmethod
-    async def get_offers(self) -> List[Dict[str, Any]]:
-        """Get P2P offers for USDT-UAH pair"""
+    async def get_offers(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
+        """Get P2P offers for USDT-UAH pair
+        
+        Args:
+            force_refresh: If True, ignore cache and fetch fresh data
+        """
         pass
     
     def normalize_offer(self, raw_offer: Dict[str, Any]) -> Dict[str, Any]:
@@ -40,10 +44,10 @@ class BaseExchange(ABC):
             'timestamp': raw_offer.get('timestamp', datetime.now().isoformat())
         }
     
-    async def get_offers_with_timeout(self, timeout: int = 30) -> List[Dict[str, Any]]:
+    async def get_offers_with_timeout(self, timeout: int = 30, force_refresh: bool = False) -> List[Dict[str, Any]]:
         """Get offers with timeout and fallback to cache"""
         try:
-            return await asyncio.wait_for(self.get_offers(), timeout=timeout)
+            return await asyncio.wait_for(self.get_offers(force_refresh=force_refresh), timeout=timeout)
         except asyncio.TimeoutError:
             logger.warning(f"{self.name}: Request timed out after {timeout}s, using cache")
             return self.offers_cache

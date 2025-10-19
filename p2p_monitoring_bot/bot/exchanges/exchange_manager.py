@@ -62,12 +62,14 @@ class ExchangeManager:
         return list(self._exchanges.keys())
     
     async def get_combined_offers(self, 
-                                exchange_names: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+                                exchange_names: Optional[List[str]] = None,
+                                force_refresh: bool = False) -> List[Dict[str, Any]]:
         """
         Get combined and sorted offers from multiple exchanges
         
         Args:
             exchange_names: List of exchanges to query (None = all active)
+            force_refresh: If True, ignore cache and fetch fresh data
             
         Returns:
             Combined list of offers sorted by price
@@ -85,9 +87,9 @@ class ExchangeManager:
                     exchange = self._exchanges[exchange_name]
                     # Используем метод с таймаутом для лучшей обработки ошибок
                     if hasattr(exchange, 'get_offers_with_timeout'):
-                        offers = await exchange.get_offers_with_timeout(30)  # 30 секунд таймаут
+                        offers = await exchange.get_offers_with_timeout(30, force_refresh=force_refresh)  # 30 секунд таймаут
                     else:
-                        offers = await exchange.get_offers()
+                        offers = await exchange.get_offers(force_refresh=force_refresh)
                     
                     if offers:
                         for offer in offers:
