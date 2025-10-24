@@ -272,10 +272,313 @@ class BinanceP2P(BaseExchange):
 
         return unique_ids
 
+    def _parse_offers_dom(self, advertiser_ids: List[str]) -> List[Dict[str, Any]]:
+        """
+        ✅ NEW: DOM-based parsing (cleaner and more reliable)
+        Falls back to text parsing if this fails
+        """
+        offers = []
+
+        try:
+            # Find all offer containers using common CSS patterns
+            # Binance uses div elements with specific classes for P2P offers
+
+            # Try multiple possible selectors (Binance changes classes sometimes)
+            selectors_to_try = [
+                "div[class*='advertiser']",  # Advertiser container
+                "div[class*='ad-container']",  # Ad container
+                "div[class*='advertise-container']",  # Advertise container
+                "[class*='UserInfo']",  # User info component
+                "[class*='AdvertItem']",  # Advert item
+                "div[class*='trade']",  # Trade container
+                "[data-bn-type='text']",  # Binance text elements
+                ".css-1m1f8hn",  # Specific CSS class (if stable)
+                ".css-vurnku",  # Another potential class
+                "div > div > div > a[href*='advertiserNo']",  # Link-based approach
+            ]
+
+            offer_elements = []
+
+            # 🎯 APPROACH 1: Try to find by link to advertiser
+            try:
+                links = self.driver.find_elements(
+                    By.CSS_SELECTOR, "a[href*='advertiserNo']"
+                )
+                if links and len(links) >= 5:
+                    # Get parent containers of these links
+                    parents = []
+                    for link in links[:15]:  # Limit to 15
+                        try:
+                            # Go up 4-5 levels to get the FULL card container (not just seller info)
+                            parent = link.find_element(By.XPATH, "./ancestor::*[5]")
+                            if parent not in parents:
+                                parents.append(parent)
+                        except:
+                            try:
+                                parent = link.find_element(By.XPATH, "./ancestor::*[4]")
+                                if parent not in parents:
+                                    parents.append(parent)
+                            except:
+                                try:
+                                    parent = link.find_element(
+                                        By.XPATH, "./ancestor::*[3]"
+                                    )
+                                    if parent not in parents:
+                                        parents.append(parent)
+                                except:
+                                    pass
+
+                    if parents:
+                        offer_elements = parents
+                        logger.info(
+                            f"✅ Found {len(parents)} elements via advertiser links"
+                        )
+            except Exception as e:
+                logger.debug(f"Link-based approach failed: {e}")
+
+            # 🎯 APPROACH 2: Try CSS selectors if approach 1 failed
+            if not offer_elements:
+                for selector in selectors_to_try:
+                    try:
+                        elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                        if elements and len(elements) > 3:  # Need at least a few offers
+                            offer_elements = elements
+                            logger.info(
+                                f"✅ Found {len(elements)} elements with selector: {selector}"
+                            )
+                            break
+                    except Exception as e:
+                        logger.debug(f"Selector '{selector}' failed: {e}")
+                        continue
+
+            if not offer_elements:
+                logger.warning("⚠️ No offer containers found with any approach")
+                return []
+
+            # Parse each offer container
+            for idx, element in enumerate(offer_elements[:MAX_OFFERS_TO_PARSE]):
+                try:
+                    # Extract text from this container
+                    element_text = element.text
+
+                    if not element_text or len(element_text) < 10:
+                        continue
+
+                    # Parse data from element text
+                    lines = element_text.split("\n")
+
+                    # Find price (check current line and adjacent lines for currency)
+                    price = None
+                    for i, line in enumerate(lines):
+                        # Pattern 1: Price and currency on same line
+                        # "43.20 UAH" or "₴43.20"
+                        price_match = re.search(
+                            r"([3-5][0-9](?:\.\d{1,2})?)\s*(?:UAH|₴)",
+                            line,
+                            re.IGNORECASE,
+                        )
+                        if not price_match:
+                            price_match = re.search(
+                                r"(?:UAH|₴)\s*([3-5][0-9](?:\.\d{1,2})?)",
+                                line,
+                                re.IGNORECASE,
+                            )
+
+                        # Pattern 2: Check if previous line has currency symbol
+                        if not price_match and i > 0:
+                            prev_line = lines[i - 1]
+                            if prev_line.strip() in ["₴", "UAH"]:
+                                # Current line might be the price
+                                num_match = re.match(
+                                    r"^([3-5][0-9](?:\.\d{1,2})?)$", line.strip()
+                                )
+                                if num_match:
+                                    price_match = num_match
+
+                        # Pattern 3: Check if next line has currency symbol
+                        if not price_match and i < len(lines) - 1:
+                            next_line = lines[i + 1]
+                            if next_line.strip() in ["₴", "UAH"]:
+                                # Current line might be the price
+                                num_match = re.match(
+                                    r"^([3-5][0-9](?:\.\d{1,2})?)$", line.strip()
+                                )
+                                if num_match:
+                                    price_match = num_match
+
+                        if price_match:
+                            try:
+                                price = float(price_match.group(1))
+                                if PRICE_RANGE[0] <= price <= PRICE_RANGE[1]:
+                                    break
+                            except ValueError:
+                                continue
+
+                    if not price:
+                        continue
+
+                    # Find username (usually alphanumeric, 3-25 chars)
+                    username = "Unknown"
+                    for line in lines:
+                        line = line.strip()
+                        if (
+                            3 <= len(line) <= 25
+                            and re.match(r"^[A-Za-z0-9_\-]+$", line)
+                            and line not in ["USDT", "UAH", "USD", "Купить", "Buy"]
+                        ):
+                            username = line
+                            break
+
+                    # Find USDT amount
+                    usdt_amount = 100.0  # Default
+                    for line in lines:
+                        usdt_match = re.search(r"([\d,\.]+)\s*USDT", line)
+                        if usdt_match:
+                            try:
+                                usdt_amount = float(
+                                    usdt_match.group(1).replace(",", "")
+                                )
+                                if usdt_amount >= MIN_USDT_AMOUNT:
+                                    break
+                            except ValueError:
+                                continue
+
+                    # Find limits - look for two consecutive lines with "UAH" and "-" separator
+                    min_limit, max_limit = 1000.0, 100000.0  # Defaults
+                    for i, line in enumerate(lines):
+                        # Pattern 1: Both on same line "1000 - 50000 UAH"
+                        limit_match = re.search(
+                            r"([\d,\.\s]+)\s*[-–—]\s*([\d,\.\s]+)\s*(?:UAH|₴)",
+                            line,
+                            re.IGNORECASE,
+                        )
+
+                        # Pattern 2: Check consecutive lines (Binance splits min and max)
+                        # Line i: "1,185.00 UAH"
+                        # Line i+1: "-"
+                        # Line i+2: "1,186.00 UAH"
+                        if not limit_match and i < len(lines) - 2:
+                            line1 = lines[i]
+                            line2 = lines[i + 1]
+                            line3 = lines[i + 2]
+
+                            # Check if middle line is separator
+                            if line2.strip() in ["-", "–", "—"]:
+                                # Extract numbers from line1 and line3
+                                min_match = re.search(
+                                    r"([\d,\.]+)\s*(?:UAH|₴)", line1, re.IGNORECASE
+                                )
+                                max_match = re.search(
+                                    r"([\d,\.]+)\s*(?:UAH|₴)", line3, re.IGNORECASE
+                                )
+
+                                if min_match and max_match:
+                                    try:
+                                        min_limit = float(
+                                            min_match.group(1).replace(",", "")
+                                        )
+                                        max_limit = float(
+                                            max_match.group(1).replace(",", "")
+                                        )
+                                        if (
+                                            min_limit >= MIN_LIMIT_VALUE
+                                            and min_limit <= max_limit
+                                        ):
+                                            break
+                                    except ValueError:
+                                        pass
+
+                        if limit_match:
+                            try:
+                                # Remove spaces and commas, convert to float
+                                min_str = (
+                                    limit_match.group(1)
+                                    .replace(",", "")
+                                    .replace(" ", "")
+                                )
+                                max_str = (
+                                    limit_match.group(2)
+                                    .replace(",", "")
+                                    .replace(" ", "")
+                                )
+                                min_limit = float(min_str)
+                                max_limit = float(max_str)
+                                if (
+                                    min_limit >= MIN_LIMIT_VALUE
+                                    and min_limit < max_limit
+                                ):
+                                    break
+                            except ValueError:
+                                continue
+
+                    # Get advertiser ID for link
+                    advertiser_no = (
+                        advertiser_ids[idx] if idx < len(advertiser_ids) else None
+                    )
+
+                    # Try to find direct link in element
+                    direct_link = self._build_offer_link(
+                        username, advertiser_no, usdt_amount
+                    )
+                    try:
+                        link_element = element.find_element(By.TAG_NAME, "a")
+                        href = link_element.get_attribute("href")
+                        if href and "advertiserNo" in href:
+                            direct_link = href
+                    except:
+                        pass  # Use fallback link
+
+                    # Create offer
+                    raw_offer = {
+                        "username": username,
+                        "price": price,
+                        "available": usdt_amount,
+                        "min_amount": min_limit,
+                        "max_amount": max_limit,
+                        "link": direct_link,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+
+                    offer = self.normalize_offer(raw_offer)
+                    offers.append(offer)
+
+                except Exception as e:
+                    logger.debug(f"Error parsing DOM element {idx}: {e}")
+                    continue
+
+            # Sort by price
+            offers.sort(key=lambda x: x["price"])
+
+            if offers:
+                logger.info(
+                    f"✅ DOM parsing extracted {len(offers)} offers successfully"
+                )
+
+            return offers
+
+        except Exception as e:
+            logger.warning(f"⚠️ DOM parsing failed completely: {e}")
+            return []
+
     def _parse_offers(
         self, page_text: str, page_source: str, advertiser_ids: List[str]
     ) -> List[Dict[str, Any]]:
         """Parse offers from page text with improved pattern matching"""
+
+        # ✅ TRY DOM PARSING FIRST (better approach)
+        try:
+            dom_offers = self._parse_offers_dom(advertiser_ids)
+            if dom_offers and len(dom_offers) > 0:
+                logger.info(f"✅ DOM parsing succeeded: {len(dom_offers)} offers")
+                return dom_offers
+            else:
+                logger.warning(
+                    "⚠️ DOM parsing returned no offers, falling back to text parsing"
+                )
+        except Exception as e:
+            logger.warning(f"⚠️ DOM parsing failed: {e}, falling back to text parsing")
+
+        # ❌ FALLBACK: Old text parsing method
         offers = []
         lines = page_text.split("\n")
 
@@ -347,7 +650,7 @@ class BinanceP2P(BaseExchange):
     def _extract_price_patterns(
         self, lines: List[str]
     ) -> List[Tuple[int, str, float, int]]:
-        """Extract price patterns with priority"""
+        """Extract price patterns with priority (for text parsing fallback)"""
         patterns = []
 
         for i, line in enumerate(lines):
@@ -383,7 +686,7 @@ class BinanceP2P(BaseExchange):
         return patterns
 
     def _extract_username_patterns(self, lines: List[str]) -> List[Tuple[int, str]]:
-        """Extract username patterns"""
+        """Extract username patterns (for text parsing fallback)"""
         patterns = []
         excluded = {"USDT", "UAH", "USD", "BTC", "ETH", "BNB"}
 
@@ -404,7 +707,7 @@ class BinanceP2P(BaseExchange):
         return patterns
 
     def _extract_usdt_patterns(self, lines: List[str]) -> List[Tuple[int, str, float]]:
-        """Extract USDT amount patterns"""
+        """Extract USDT amount patterns (for text parsing fallback)"""
         patterns = []
 
         for i, line in enumerate(lines):
@@ -420,7 +723,7 @@ class BinanceP2P(BaseExchange):
         return patterns
 
     def _extract_limit_patterns(self, lines: List[str]) -> List[Tuple[int, str, float]]:
-        """Extract limit patterns"""
+        """Extract limit patterns (for text parsing fallback)"""
         patterns = []
 
         for i, line in enumerate(lines):
@@ -438,7 +741,7 @@ class BinanceP2P(BaseExchange):
     def _find_nearest_username(
         self, price_idx: int, username_patterns: List[Tuple[int, str]]
     ) -> str:
-        """Find nearest username to price line"""
+        """Find nearest username to price line (for text parsing fallback)"""
         username = "Unknown"
         min_distance = float("inf")
 
@@ -453,7 +756,7 @@ class BinanceP2P(BaseExchange):
     def _find_nearest_usdt(
         self, price_idx: int, usdt_patterns: List[Tuple[int, str, float]]
     ) -> float:
-        """Find nearest USDT amount to price line"""
+        """Find nearest USDT amount to price line (for text parsing fallback)"""
         usdt_amount = 100.0  # Default
         min_distance = float("inf")
 
@@ -468,7 +771,7 @@ class BinanceP2P(BaseExchange):
     def _find_nearest_limits(
         self, price_idx: int, limit_patterns: List[Tuple[int, str, float]]
     ) -> Tuple[float, float]:
-        """Find nearest limit values to price line"""
+        """Find nearest limit values to price line (for text parsing fallback)"""
         limits_nearby = []
 
         for limit_idx, _, limit_value in limit_patterns:
@@ -497,7 +800,7 @@ class BinanceP2P(BaseExchange):
             return f"{self.base_url}&merchant={username}&amount={usdt_amount}"
 
     def format_offer_message(self, offer: Dict[str, Any]) -> str:
-        """Format Binance offer for user notification"""
+        """Format Binance offer for user notification with clickable links"""
         username = offer.get("username", "Unknown")
         price = offer.get("price", 0)
         available = offer.get("available", 0)
