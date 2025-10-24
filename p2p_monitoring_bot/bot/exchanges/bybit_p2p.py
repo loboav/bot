@@ -4,12 +4,13 @@ ByBit P2P Exchange Integration
 ==============================
 
 Real ByBit P2P data extraction using browser automation
+Simplified version with nickname-based links
 """
 
 import asyncio
 import re
-from datetime import datetime
-from typing import List, Dict, Any, Optional
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Tuple
 import logging
 
 from selenium import webdriver
@@ -20,74 +21,94 @@ from selenium.webdriver.support import expected_conditions as EC
 
 from .base_exchange import BaseExchange
 
-# Import settings with proper path handling
+# Import settings
 import sys
 import os
 
 sys.path.append(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 )
-from config.settings import BROWSER_HEADLESS, BROWSER_TIMEOUT, EXCHANGE_URLS
+from config.settings import BROWSER_HEADLESS, EXCHANGE_URLS
 
 logger = logging.getLogger(__name__)
 
+# Constants for parsing
+PRICE_RANGE = (35.0, 55.0)  # Valid USDT-UAH price range
+MIN_USDT_AMOUNT = 10.0  # Minimum reasonable USDT amount
+MIN_LIMIT_VALUE = 100.0  # Minimum reasonable limit in UAH
+USERNAME_LENGTH_RANGE = (3, 25)  # Valid username length
+SEARCH_RADIUS = 5  # Lines to search around price for username
+USDT_SEARCH_RADIUS = 5  # Lines to search around price for USDT amount
+LIMIT_SEARCH_RADIUS = 5  # Lines to search around price for limits
+MAX_OFFERS_TO_PARSE = 10  # Maximum offers to extract
+
+# Timing constants
+PAGE_LOAD_TIMEOUT = 10  # Seconds to wait for page load
+CONTENT_LOAD_DELAY = 5  # Seconds to wait for dynamic content
+SCROLL_DELAY = 0.5  # Seconds between scrolls
+SCROLL_COUNT = 4  # Number of scroll iterations
+SCROLL_DISTANCE = 250  # Pixels per scroll
+
+# Cache settings
+CACHE_TTL_MINUTES = 5  # Cache time-to-live in minutes
+
 
 class ByBitP2P(BaseExchange):
-    """ByBit P2P integration with real browser data extraction"""
+    """ByBit P2P integration with optimized browser data extraction"""
 
     def __init__(self):
         super().__init__("ByBit")
         self.driver = None
         self.base_url = EXCHANGE_URLS["bybit"]
 
-    def setup_browser(self):
-        """Setup Chrome browser with optimized settings"""
+    def setup_browser(self) -> bool:
+        """Setup Chrome browser with maximum speed optimizations"""
         if self.driver:
             return True
 
         try:
             chrome_options = Options()
 
-            # Use headless mode from config
+            # Headless mode
             if BROWSER_HEADLESS:
                 chrome_options.add_argument("--headless=new")
 
-            # MAXIMUM SPEED optimizations
-            chrome_options.add_argument("--no-sandbox")
-            chrome_options.add_argument("--disable-dev-shm-usage")
-            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            # Core performance options
+            performance_args = [
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled",
+                "--window-size=1280,720",
+                "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            ]
+
+            # Speed boost options
+            speed_args = [
+                "--disable-extensions",
+                "--disable-plugins",
+                "--disable-images",  # Major speed boost
+                "--disable-web-security",
+                "--disable-features=VizDisplayCompositor",
+                "--disable-background-timer-throttling",
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
+                "--disable-default-apps",
+                "--disable-sync",
+                "--disable-gpu",
+                "--disable-css3-animations",
+                "--disable-smooth-scrolling",
+                "--memory-pressure-off",
+                "--disable-logging",
+                "--enable-unsafe-swiftshader",
+            ]
+
+            for arg in performance_args + speed_args:
+                chrome_options.add_argument(arg)
+
             chrome_options.add_experimental_option(
                 "excludeSwitches", ["enable-automation"]
             )
             chrome_options.add_experimental_option("useAutomationExtension", False)
-            chrome_options.add_argument(
-                "--window-size=1280,720"
-            )  # Smaller window = faster
-            chrome_options.add_argument(
-                "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-
-            # SPEED BOOST: Disable unnecessary features (SAFE options)
-            chrome_options.add_argument("--disable-extensions")
-            chrome_options.add_argument("--disable-plugins")
-            chrome_options.add_argument(
-                "--disable-images"
-            )  # Don't load images - major speed boost
-            chrome_options.add_argument("--disable-web-security")
-            chrome_options.add_argument("--disable-features=VizDisplayCompositor")
-            chrome_options.add_argument("--disable-background-timer-throttling")
-            chrome_options.add_argument("--disable-backgrounding-occluded-windows")
-            chrome_options.add_argument("--disable-renderer-backgrounding")
-            chrome_options.add_argument("--disable-default-apps")
-            chrome_options.add_argument("--disable-sync")
-            chrome_options.add_argument("--disable-gpu")  # No GPU acceleration needed
-            chrome_options.add_argument("--disable-css3-animations")
-            chrome_options.add_argument("--disable-smooth-scrolling")
-            chrome_options.add_argument("--memory-pressure-off")
-            chrome_options.add_argument("--disable-logging")
-            chrome_options.add_argument(
-                "--enable-unsafe-swiftshader"
-            )  # Fix WebGL warnings
 
             self.driver = webdriver.Chrome(options=chrome_options)
             self.driver.execute_script(
@@ -102,53 +123,49 @@ class ByBitP2P(BaseExchange):
             return False
 
     async def get_offers(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
-        """Extract real P2P offers from ByBit website - OPTIMIZED VERSION"""
-        # Check cache first (5 minutes TTL) unless force refresh is requested
-        if not force_refresh and self.offers_cache and self.last_update:
-            from datetime import timedelta
-
-            if datetime.now() - self.last_update < timedelta(minutes=5):
-                logger.info(
-                    f"Using cached ByBit data ({len(self.offers_cache)} offers)"
-                )
-                return self.offers_cache
+        """Extract P2P offers from ByBit with smart caching"""
+        # Check cache
+        if not force_refresh and self._is_cache_valid():
+            logger.info(f"Using cached ByBit data ({len(self.offers_cache)} offers)")
+            return self.offers_cache
 
         if not self.setup_browser():
             logger.warning("Browser setup failed, returning cached offers")
             return self.offers_cache
 
         try:
-            mode_text = "FRESH DATA" if force_refresh else "FAST MODE"
-            logger.info(f"Fetching ByBit P2P offers... ({mode_text})")
+            mode = "FRESH DATA" if force_refresh else "FAST MODE"
+            logger.info(f"Fetching ByBit P2P offers... ({mode})")
             start_time = datetime.now()
 
-            # Navigate to P2P page
+            # Load page
             self.driver.get(self.base_url)
 
-            # OPTIMIZATION: Reduced wait times and smarter loading
+            # Wait for page load
             try:
-                WebDriverWait(self.driver, 10).until(
+                WebDriverWait(self.driver, PAGE_LOAD_TIMEOUT).until(
                     EC.presence_of_element_located((By.TAG_NAME, "body"))
                 )
-            except:
-                logger.error("Page load timeout")
+            except Exception as e:
+                logger.error(f"Page load timeout: {e}")
+                # Clean up browser on error
+                self._force_cleanup_browser()
                 return self.offers_cache
 
-            # OPTIMIZATION: Much shorter wait for dynamic content
-            await asyncio.sleep(3)  # Reduced from 8 to 3 seconds
+            # Wait for dynamic content
+            await asyncio.sleep(CONTENT_LOAD_DELAY)
 
-            # OPTIMIZATION: Multiple small scrolls instead of one big
-            for i in range(3):
-                self.driver.execute_script(f"window.scrollTo(0, {200 * (i + 1)});")
-                await asyncio.sleep(0.5)  # Very short waits
+            # Scroll to trigger lazy loading
+            await self._scroll_page()
 
-            # Extract offers from page text - OPTIMIZED
+            # Extract data
             page_text = self.driver.find_element(By.TAG_NAME, "body").text
-            offers = self.parse_offers_from_page_text(page_text)
 
-            # Calculate timing
-            end_time = datetime.now()
-            duration = (end_time - start_time).total_seconds()
+            # Parse offers
+            offers = self._parse_offers(page_text)
+
+            # Calculate duration
+            duration = (datetime.now() - start_time).total_seconds()
 
             if offers:
                 self.offers_cache = offers
@@ -161,123 +178,239 @@ class ByBitP2P(BaseExchange):
                     f"No offers extracted from ByBit page (took {duration:.1f}s)"
                 )
 
+            # ✅ CRITICAL FIX: Always close browser after successful request
+            self._force_cleanup_browser()
+
             return offers if offers else self.offers_cache
 
         except ConnectionError as e:
             logger.error(f"ByBit connection error: {e} - using cache")
+            # Clean up browser on error
+            self._force_cleanup_browser()
             return self.offers_cache
         except Exception as e:
             logger.error(f"ByBit offers fetch failed: {e} - using cache")
             import traceback
 
             logger.debug(traceback.format_exc())
+            # Clean up browser on error
+            self._force_cleanup_browser()
             return self.offers_cache
 
-    def parse_offers_from_page_text(self, page_text: str) -> List[Dict[str, Any]]:
-        """Parse P2P offers from full page text using improved patterns"""
+    def _is_cache_valid(self) -> bool:
+        """Check if cache is still valid"""
+        if not self.offers_cache or not self.last_update:
+            return False
+        return datetime.now() - self.last_update < timedelta(minutes=CACHE_TTL_MINUTES)
+
+    async def _scroll_page(self):
+        """Scroll page to trigger lazy loading"""
+        for i in range(SCROLL_COUNT):
+            self.driver.execute_script(
+                f"window.scrollTo(0, {SCROLL_DISTANCE * (i + 1)});"
+            )
+            await asyncio.sleep(SCROLL_DELAY)
+
+    def _parse_offers(self, page_text: str) -> List[Dict[str, Any]]:
+        """Parse offers from page text with improved pattern matching"""
         offers = []
+        lines = page_text.split("\n")
 
-        try:
-            lines = page_text.split("\n")
+        # Extract patterns
+        price_patterns = self._extract_price_patterns(lines)
+        username_patterns = self._extract_username_patterns(lines)
+        usdt_patterns = self._extract_usdt_patterns(lines)
+        limit_patterns = self._extract_limit_patterns(lines)
 
-            # Find lines with price patterns
-            price_lines = []
-            for i, line in enumerate(lines):
-                if re.search(r"\d+[,\.]\d+\s*UAH", line.strip()):
-                    price_lines.append((i, line.strip()))
+        logger.info(
+            f"Found {len(price_patterns)} price patterns, {len(usdt_patterns)} USDT patterns, "
+            f"{len(limit_patterns)} limit patterns, {len(username_patterns)} usernames"
+        )
 
-            logger.info(f"Found {len(price_lines)} price patterns")
+        # Match data by position
+        for offer_idx, (price_idx, price_line, price) in enumerate(
+            price_patterns[:MAX_OFFERS_TO_PARSE]
+        ):
+            try:
+                username = self._find_nearest_username(price_idx, username_patterns)
+                if username == "Unknown":
+                    continue  # Skip offers without username
 
-            # Extract usernames and other data from context
-            for line_idx, price_line in price_lines[:10]:  # Top 10 offers
+                usdt_amount = self._find_nearest_usdt(price_idx, usdt_patterns)
+                min_limit, max_limit = self._find_nearest_limits(
+                    price_idx, limit_patterns
+                )
+
+                # Build simple nickname-based link
+                direct_link = self._build_offer_link(username, usdt_amount)
+
+                logger.info(f"✅ {username} -> {price:.2f} UAH")
+
+                # Create and normalize offer
+                raw_offer = {
+                    "username": username,
+                    "price": price,
+                    "available": usdt_amount,
+                    "min_amount": min_limit,
+                    "max_amount": max_limit,
+                    "link": direct_link,
+                    "timestamp": datetime.now().isoformat(),
+                }
+
+                offer = self.normalize_offer(raw_offer)
+                offers.append(offer)
+
+            except Exception as e:
+                logger.error(f"Error parsing offer at line {price_idx}: {e}")
+                continue
+
+        # Sort by price
+        offers.sort(key=lambda x: x["price"])
+        logger.info(f"Successfully parsed {len(offers)} offers")
+
+        return offers
+
+    def _extract_price_patterns(self, lines: List[str]) -> List[Tuple[int, str, float]]:
+        """Extract price patterns from lines"""
+        patterns = []
+
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                continue
+
+            # Pattern: "42.50 UAH", "42,50 UAH"
+            match = re.search(r"(\d+[,\.]\d+)\s*UAH", line)
+            if match:
                 try:
-                    # Extract price
-                    price_match = re.search(r"(\d+[,\.]\d+)\s*UAH", price_line)
-                    if not price_match:
-                        continue
-
-                    price_str = price_match.group(1).replace(",", ".")
+                    price_str = match.group(1).replace(",", ".")
                     price = float(price_str)
+                    if PRICE_RANGE[0] <= price <= PRICE_RANGE[1]:
+                        patterns.append((i, line, price))
+                except ValueError:
+                    pass
 
-                    # Look for username in nearby lines
-                    username = "Unknown"
-                    for check_idx in range(
-                        max(0, line_idx - 5), min(len(lines), line_idx + 3)
-                    ):
-                        line = lines[check_idx].strip()
-                        # Fixed regex to capture the full username including first character
-                        username_match = re.match(
-                            r"^([A-Za-z0-9⓻👻][A-Za-z0-9_]+)", line
-                        )
-                        if username_match and len(username_match.group(1)) > 2:
-                            username = username_match.group(1)
-                            break
+        return patterns
 
-                    # Look for USDT amounts
-                    available = 50.0  # Default
-                    for check_idx in range(
-                        max(0, line_idx - 2), min(len(lines), line_idx + 5)
-                    ):
-                        line = lines[check_idx].strip()
-                        usdt_match = re.search(r"(\d+[,\.]\d+)\s*USDT", line)
-                        if usdt_match:
-                            usdt_str = usdt_match.group(1).replace(",", ".")
-                            available = float(usdt_str)
-                            break
+    def _extract_username_patterns(self, lines: List[str]) -> List[Tuple[int, str]]:
+        """Extract username patterns"""
+        patterns = []
+        excluded = {"USDT", "UAH", "USD", "BTC", "ETH", "BNB"}
 
-                    # Look for limit ranges
-                    min_amount, max_amount = 1000.0, 50000.0
-                    for check_idx in range(
-                        max(0, line_idx - 2), min(len(lines), line_idx + 5)
-                    ):
-                        line = lines[check_idx].strip()
-                        limit_match = re.search(
-                            r"(\d+(?:[,\s]\d+)*[,\.]\d+)\s*~\s*(\d+(?:[,\s]\d+)*[,\.]\d+)\s*UAH",
-                            line,
-                        )
-                        if limit_match:
-                            min_str = (
-                                limit_match.group(1).replace(" ", "").replace(",", ".")
-                            )
-                            max_str = (
-                                limit_match.group(2).replace(" ", "").replace(",", ".")
-                            )
-                            try:
-                                min_amount = float(min_str)
-                                max_amount = float(max_str)
-                            except:
-                                pass
-                            break
+        for i, line in enumerate(lines):
+            line = line.strip()
+            min_len, max_len = USERNAME_LENGTH_RANGE
 
-                    # Создаем сырое предложение
-                    raw_offer = {
-                        "username": username,
-                        "price": price,
-                        "available": available,
-                        "min_amount": min_amount,
-                        "max_amount": max_amount,
-                        "link": f"{self.base_url}&amount={available}&nickName={username}",
-                        "timestamp": datetime.now().isoformat(),
-                    }
+            # Pattern: usernames with alphanumeric + special chars (⓻, 👻, etc)
+            if (
+                min_len <= len(line) <= max_len
+                and re.match(r"^[A-Za-z0-9⓻👻_\-@.]+$", line)
+                and line not in excluded
+                and "UAH" not in line
+                and "USDT" not in line
+                and not re.match(r"^[0-9,.\s]+$", line)
+            ):
+                patterns.append((i, line))
 
-                    # Нормализуем через базовый класс
-                    offer = self.normalize_offer(raw_offer)
+        return patterns
 
-                    offers.append(offer)
+    def _extract_usdt_patterns(self, lines: List[str]) -> List[Tuple[int, str, float]]:
+        """Extract USDT amount patterns"""
+        patterns = []
 
-                except Exception as e:
-                    logger.error(f"Error parsing offer at line {line_idx}: {e}")
-                    continue
+        for i, line in enumerate(lines):
+            match = re.search(r"(\d+[,\.]\d+)\s*USDT", line)
+            if match:
+                try:
+                    amount_str = match.group(1).replace(",", ".")
+                    amount = float(amount_str)
+                    if amount > MIN_USDT_AMOUNT:
+                        patterns.append((i, line, amount))
+                except ValueError:
+                    pass
 
-            # Sort by price (best offers first)
-            offers.sort(key=lambda x: x["price"])
+        return patterns
 
-            logger.info(f"Successfully parsed {len(offers)} offers")
-            return offers
+    def _extract_limit_patterns(
+        self, lines: List[str]
+    ) -> List[Tuple[int, str, float, float]]:
+        """Extract limit patterns"""
+        patterns = []
 
-        except Exception as e:
-            logger.error(f"Error in parse_offers_from_page_text: {e}")
-            return []
+        for i, line in enumerate(lines):
+            # Pattern: "5,000 ~ 50,000 UAH", "5 000 ~ 50 000 UAH"
+            match = re.search(
+                r"(\d+(?:[,\s]\d+)*[,\.]\d+)\s*~\s*(\d+(?:[,\s]\d+)*[,\.]\d+)\s*UAH",
+                line,
+            )
+            if match:
+                try:
+                    min_str = match.group(1).replace(" ", "").replace(",", ".")
+                    max_str = match.group(2).replace(" ", "").replace(",", ".")
+                    min_value = float(min_str)
+                    max_value = float(max_str)
+                    if min_value >= MIN_LIMIT_VALUE:
+                        patterns.append((i, line, min_value, max_value))
+                except ValueError:
+                    pass
+
+        return patterns
+
+    def _find_nearest_username(
+        self, price_idx: int, username_patterns: List[Tuple[int, str]]
+    ) -> str:
+        """Find nearest username to price line"""
+        username = "Unknown"
+        min_distance = float("inf")
+
+        for user_idx, user_name in username_patterns:
+            distance = abs(user_idx - price_idx)
+            if distance < min_distance and distance <= SEARCH_RADIUS:
+                username = user_name
+                min_distance = distance
+
+        return username
+
+    def _find_nearest_usdt(
+        self, price_idx: int, usdt_patterns: List[Tuple[int, str, float]]
+    ) -> float:
+        """Find nearest USDT amount to price line"""
+        usdt_amount = 50.0  # Default
+        min_distance = float("inf")
+
+        for usdt_idx, _, amount in usdt_patterns:
+            distance = abs(usdt_idx - price_idx)
+            if distance < min_distance and distance <= USDT_SEARCH_RADIUS:
+                usdt_amount = amount
+                min_distance = distance
+
+        return usdt_amount
+
+    def _find_nearest_limits(
+        self, price_idx: int, limit_patterns: List[Tuple[int, str, float, float]]
+    ) -> Tuple[float, float]:
+        """Find nearest limit values to price line"""
+        min_limit = 1000.0  # Default
+        max_limit = 50000.0  # Default
+        min_distance = float("inf")
+
+        for limit_idx, _, min_val, max_val in limit_patterns:
+            distance = abs(limit_idx - price_idx)
+            if distance < min_distance and distance <= LIMIT_SEARCH_RADIUS:
+                min_limit = min_val
+                max_limit = max_val
+                min_distance = distance
+
+        # Ensure min < max
+        if min_limit > max_limit:
+            min_limit, max_limit = max_limit, min_limit
+
+        return min_limit, max_limit
+
+    def _build_offer_link(self, username: str, usdt_amount: float) -> str:
+        """Build direct link to offer (nickname-based)"""
+        # Simple nickname-based link (fallback)
+        return f"{self.base_url}&amount={usdt_amount}&nickName={username}"
 
     def format_offer_message(self, offer: Dict[str, Any]) -> str:
         """Format ByBit offer with direct link for user convenience"""
@@ -296,14 +429,23 @@ class ByBitP2P(BaseExchange):
 🔗 Прямая ссылка: <a href='{link}'>Купить у {username}</a>
 ⚡ Быстрая ссылка: {self.base_url}""".strip()
 
-    def cleanup_if_needed(self):
-        """Smart cleanup - only if browser has been idle"""
+    def _force_cleanup_browser(self):
+        """Force cleanup browser immediately after request"""
         if self.driver:
             try:
-                # Проверяем, что браузер еще отвечает
-                self.driver.current_url  # Простая проверка
+                self.driver.quit()
+                logger.debug("ByBit browser closed after request")
+            except Exception as e:
+                logger.debug(f"Error closing ByBit browser: {e}")
+            finally:
+                self.driver = None
+
+    def cleanup_if_needed(self):
+        """Smart cleanup - only if browser is not responding"""
+        if self.driver:
+            try:
+                self.driver.current_url
             except Exception:
-                # Браузер не отвечает, очищаем
                 logger.warning("ByBit browser not responding, cleaning up")
                 try:
                     self.driver.quit()
@@ -321,5 +463,4 @@ class ByBitP2P(BaseExchange):
                 logger.info("ByBit browser cleaned up")
             except Exception as e:
                 logger.warning(f"Error cleaning up ByBit browser: {e}")
-                # Игнорируем ошибку, ставим driver в None в любом случае
                 self.driver = None

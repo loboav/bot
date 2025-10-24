@@ -4,12 +4,13 @@ Binance P2P Exchange Integration
 ================================
 
 Real Binance P2P data extraction using browser automation
+Optimized version with better code organization and performance
 """
 
 import asyncio
 import re
-from datetime import datetime
-from typing import List, Dict, Any, Optional
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Tuple
 import logging
 
 from selenium import webdriver
@@ -20,7 +21,7 @@ from selenium.webdriver.support import expected_conditions as EC
 
 from .base_exchange import BaseExchange
 
-# Import settings with proper path handling
+# Import settings
 import sys
 import os
 
@@ -31,64 +32,83 @@ from config.settings import BROWSER_HEADLESS, BROWSER_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
+# Constants for parsing
+PRICE_RANGE = (35.0, 55.0)  # Valid USDT-UAH price range
+MIN_USDT_AMOUNT = 10.0  # Minimum reasonable USDT amount
+MIN_LIMIT_VALUE = 100.0  # Minimum reasonable limit in UAH
+USERNAME_LENGTH_RANGE = (3, 25)  # Valid username length
+SEARCH_RADIUS = 20  # Lines to search around price for username
+USDT_SEARCH_RADIUS = 15  # Lines to search around price for USDT amount
+LIMIT_SEARCH_RADIUS = 15  # Lines to search around price for limits
+MAX_OFFERS_TO_PARSE = 15  # Maximum offers to extract
+
+# Timing constants
+PAGE_LOAD_TIMEOUT = 10  # Seconds to wait for page load
+CONTENT_LOAD_DELAY = 5  # Seconds to wait for dynamic content
+SCROLL_DELAY = 1  # Seconds between scrolls
+SCROLL_COUNT = 3  # Number of scroll iterations
+SCROLL_DISTANCE = 300  # Pixels per scroll
+
+# Cache settings
+CACHE_TTL_MINUTES = 5  # Cache time-to-live in minutes
+
 
 class BinanceP2P(BaseExchange):
-    """Binance P2P integration with real browser data extraction"""
+    """Binance P2P integration with optimized browser data extraction"""
 
     def __init__(self):
         super().__init__("Binance")
         self.driver = None
-        # Прямо заходим на страницу покупки USDT за UAH
         self.base_url = "https://p2p.binance.com/ru/trade/all-payments/USDT?fiat=UAH"
 
-    def setup_browser(self):
-        """Setup Chrome browser with optimized settings"""
+    def setup_browser(self) -> bool:
+        """Setup Chrome browser with maximum speed optimizations"""
         if self.driver:
             return True
 
         try:
             chrome_options = Options()
 
-            # Use headless mode from config
+            # Headless mode
             if BROWSER_HEADLESS:
                 chrome_options.add_argument("--headless=new")
 
-            # MAXIMUM SPEED optimizations
-            chrome_options.add_argument("--no-sandbox")
-            chrome_options.add_argument("--disable-dev-shm-usage")
-            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            # Core performance options
+            performance_args = [
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled",
+                "--window-size=1280,720",
+                "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            ]
+
+            # Speed boost options
+            speed_args = [
+                "--disable-extensions",
+                "--disable-plugins",
+                "--disable-images",  # Major speed boost
+                "--disable-web-security",
+                "--disable-features=VizDisplayCompositor",
+                "--disable-background-timer-throttling",
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
+                "--disable-default-apps",
+                "--disable-sync",
+                "--disable-gpu",
+                "--disable-css3-animations",
+                "--disable-smooth-scrolling",
+                "--memory-pressure-off",
+                "--disable-logging",
+                "--enable-unsafe-swiftshader",
+            ]
+
+            for arg in performance_args + speed_args:
+                chrome_options.add_argument(arg)
+
             chrome_options.add_experimental_option(
                 "excludeSwitches", ["enable-automation"]
             )
             chrome_options.add_experimental_option("useAutomationExtension", False)
-            chrome_options.add_argument(
-                "--window-size=1280,720"
-            )  # Smaller window = faster
-            chrome_options.add_argument(
-                "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-
-            # SPEED BOOST: Disable unnecessary features (SAFE options)
-            chrome_options.add_argument("--disable-extensions")
-            chrome_options.add_argument("--disable-plugins")
-            chrome_options.add_argument(
-                "--disable-images"
-            )  # Don't load images - major speed boost
-            chrome_options.add_argument("--disable-web-security")
-            chrome_options.add_argument("--disable-features=VizDisplayCompositor")
-            chrome_options.add_argument("--disable-background-timer-throttling")
-            chrome_options.add_argument("--disable-backgrounding-occluded-windows")
-            chrome_options.add_argument("--disable-renderer-backgrounding")
-            chrome_options.add_argument("--disable-default-apps")
-            chrome_options.add_argument("--disable-sync")
-            chrome_options.add_argument("--disable-gpu")  # No GPU acceleration needed
-            chrome_options.add_argument("--disable-css3-animations")
-            chrome_options.add_argument("--disable-smooth-scrolling")
-            chrome_options.add_argument("--memory-pressure-off")
-            chrome_options.add_argument("--disable-logging")
-            chrome_options.add_argument(
-                "--enable-unsafe-swiftshader"
-            )  # Fix WebGL warnings
 
             self.driver = webdriver.Chrome(options=chrome_options)
             self.driver.execute_script(
@@ -103,128 +123,51 @@ class BinanceP2P(BaseExchange):
             return False
 
     async def get_offers(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
-        """Extract real P2P offers from Binance website - OPTIMIZED VERSION"""
-        # Check cache first (5 minutes TTL) unless force refresh is requested
-        if not force_refresh and self.offers_cache and self.last_update:
-            from datetime import timedelta
-
-            if datetime.now() - self.last_update < timedelta(minutes=5):
-                logger.info(
-                    f"Using cached Binance data ({len(self.offers_cache)} offers)"
-                )
-                return self.offers_cache
+        """Extract P2P offers from Binance with smart caching"""
+        # Check cache
+        if not force_refresh and self._is_cache_valid():
+            logger.info(f"Using cached Binance data ({len(self.offers_cache)} offers)")
+            return self.offers_cache
 
         if not self.setup_browser():
             logger.warning("Browser setup failed, returning cached offers")
             return self.offers_cache
 
         try:
-            mode_text = "FRESH DATA" if force_refresh else "FAST MODE"
-            logger.info(f"Fetching Binance P2P offers... ({mode_text})")
+            mode = "FRESH DATA" if force_refresh else "FAST MODE"
+            logger.info(f"Fetching Binance P2P offers... ({mode})")
             start_time = datetime.now()
 
-            # Navigate to P2P page
+            # Load page
             self.driver.get(self.base_url)
 
-            # OPTIMIZATION: Reduced wait times and smarter loading
+            # Wait for page load
             try:
-                WebDriverWait(self.driver, 10).until(
+                WebDriverWait(self.driver, PAGE_LOAD_TIMEOUT).until(
                     EC.presence_of_element_located((By.TAG_NAME, "body"))
                 )
             except:
                 logger.error("Page load timeout")
+                # Clean up browser on error
+                self._force_cleanup_browser()
                 return self.offers_cache
 
-            # OPTIMIZATION: Much shorter wait for dynamic content
-            await asyncio.sleep(5)  # Give time for P2P data to load
+            # Wait for dynamic content
+            await asyncio.sleep(CONTENT_LOAD_DELAY)
 
-            # OPTIMIZATION: Multiple small scrolls to trigger lazy loading
-            for i in range(3):
-                self.driver.execute_script(f"window.scrollTo(0, {300 * (i + 1)});")
-                await asyncio.sleep(1)  # Short waits
+            # Scroll to trigger lazy loading
+            await self._scroll_page()
 
-            # Extract offers from page text AND HTML source - OPTIMIZED
+            # Extract data
             page_text = self.driver.find_element(By.TAG_NAME, "body").text
-
-            # Получаем advertiserNo через поиск в Performance Logs (Network запросы)
-            advertiser_ids = []
-            try:
-                # Попытка 1: Искать в localStorage/sessionStorage
-                storage_data = self.driver.execute_script("""
-                    let data = [];
-                    // Проверяем localStorage
-                    for (let i = 0; i < localStorage.length; i++) {
-                        let key = localStorage.key(i);
-                        let value = localStorage.getItem(key);
-                        if (value && value.includes('advertiserNo')) {
-                            data.push(value);
-                        }
-                    }
-                    // Проверяем sessionStorage
-                    for (let i = 0; i < sessionStorage.length; i++) {
-                        let key = sessionStorage.key(i);
-                        let value = sessionStorage.getItem(key);
-                        if (value && value.includes('advertiserNo')) {
-                            data.push(value);
-                        }
-                    }
-                    return data.join('|||');
-                """)
-
-                if storage_data:
-                    matches = re.findall(
-                        r'"?advertiserNo"?\s*:\s*"?(s[a-f0-9]{32,})"?', storage_data
-                    )
-                    advertiser_ids.extend(matches)
-                    logger.info(f"📦 Found {len(matches)} IDs in storage")
-            except Exception as e:
-                logger.warning(f"Storage check failed: {e}")
-
-            # Попытка 2: Искать ссылки с advertiserNo в DOM
-            try:
-                links = self.driver.execute_script("""
-                    let ids = [];
-                    document.querySelectorAll('a[href*="advertiserNo"]').forEach(link => {
-                        let match = link.href.match(/advertiserNo=([a-f0-9s]+)/);
-                        if (match && match[1]) ids.push(match[1]);
-                    });
-                    return ids;
-                """)
-                if links:
-                    advertiser_ids.extend(links)
-                    logger.info(f"🔗 Found {len(links)} IDs in links")
-            except Exception as e:
-                logger.warning(f"Link check failed: {e}")
-
-            # Попытка 3: Поиск через все текстовые узлы
             page_source = self.driver.page_source
-            html_matches = re.findall(
-                r'advertiserNo["\s:=]+(s[a-f0-9]{32,})', page_source
-            )
-            if html_matches:
-                advertiser_ids.extend(html_matches)
-                logger.info(f"📄 Found {len(html_matches)} IDs in HTML source")
+            advertiser_ids = self._extract_advertiser_ids(page_source)
 
-            # Удаляем дубликаты, сохраняя порядок
-            seen = set()
-            unique_ids = []
-            for aid in advertiser_ids:
-                if aid not in seen:
-                    seen.add(aid)
-                    unique_ids.append(aid)
+            # Parse offers
+            offers = self._parse_offers(page_text, page_source, advertiser_ids)
 
-            advertiser_ids = unique_ids
-            logger.info(f"✅ Total unique advertiser IDs: {len(advertiser_ids)}")
-            if advertiser_ids:
-                logger.info(f"First 3: {advertiser_ids[:3]}")
-
-            offers = self.parse_offers_from_page_text(
-                page_text, page_source, advertiser_ids
-            )
-
-            # Calculate timing
-            end_time = datetime.now()
-            duration = (end_time - start_time).total_seconds()
+            # Calculate duration
+            duration = (datetime.now() - start_time).total_seconds()
 
             if offers:
                 self.offers_cache = offers
@@ -237,217 +180,321 @@ class BinanceP2P(BaseExchange):
                     f"No offers extracted from Binance page (took {duration:.1f}s)"
                 )
 
+            # ✅ CRITICAL FIX: Always close browser after successful request
+            self._force_cleanup_browser()
+
             return offers if offers else self.offers_cache
 
+        except ConnectionError as e:
+            logger.error(f"Binance connection error: {e} - using cache")
+            # Clean up browser on error
+            self._force_cleanup_browser()
+            return self.offers_cache
         except Exception as e:
             logger.error(f"Binance offers fetch failed: {e}")
+            import traceback
+
+            logger.debug(traceback.format_exc())
+            # Clean up browser on error
+            self._force_cleanup_browser()
             return self.offers_cache
 
-    def parse_offers_from_page_text(
-        self, page_text: str, page_source: str = "", advertiser_ids: List[str] = None
-    ) -> List[Dict[str, Any]]:
-        """Parse P2P offers from Binance page text using real structure"""
-        offers = []
+    def _is_cache_valid(self) -> bool:
+        """Check if cache is still valid"""
+        if not self.offers_cache or not self.last_update:
+            return False
+        return datetime.now() - self.last_update < timedelta(minutes=CACHE_TTL_MINUTES)
 
+    async def _scroll_page(self):
+        """Scroll page to trigger lazy loading"""
+        for i in range(SCROLL_COUNT):
+            self.driver.execute_script(
+                f"window.scrollTo(0, {SCROLL_DISTANCE * (i + 1)});"
+            )
+            await asyncio.sleep(SCROLL_DELAY)
+
+    def _extract_advertiser_ids(self, page_source: str) -> List[str]:
+        """Extract advertiser IDs from page source using multiple methods"""
+        advertiser_ids = []
+
+        # Method 1: Extract from storage
         try:
-            # Используем переданные advertiser_ids (из JavaScript)
-            if advertiser_ids is None:
-                advertiser_ids = []
+            storage_data = self.driver.execute_script("""
+                let data = [];
+                for (let i = 0; i < localStorage.length; i++) {
+                    let value = localStorage.getItem(localStorage.key(i));
+                    if (value && value.includes('advertiserNo')) data.push(value);
+                }
+                for (let i = 0; i < sessionStorage.length; i++) {
+                    let value = sessionStorage.getItem(sessionStorage.key(i));
+                    if (value && value.includes('advertiserNo')) data.push(value);
+                }
+                return data.join('|||');
+            """)
 
-            lines = page_text.split("\n")
-
-            # Найдем все цены в UAH формате Binance
-            price_patterns = []
-            username_patterns = []
-            usdt_patterns = []
-            limit_patterns = []
-
-            for i, line in enumerate(lines):
-                line = line.strip()
-                if not line:
-                    continue
-
-                # Поиск цен в формате UAH: приоритет с символом валюты
-                # 1. С символом гривны: "₴ 44.00", "₴ 42.50" и т.д.
-                price_match_uah = re.match(r"^₴\s*([3-5][0-9](?:\.\d{1,2})?)$", line)
-                # 2. С текстом UAH: "44.00 UAH", "42.50 UAH"
-                price_match_text = re.match(
-                    r"^([3-5][0-9](?:\.\d{1,2})?)\s*UAH$", line, re.IGNORECASE
+            if storage_data:
+                matches = re.findall(
+                    r'"?advertiserNo"?\s*:\s*"?(s[a-f0-9]{32,})"?', storage_data
                 )
-                # 3. Последняя попытка: голые числа в диапазоне, но с осторожностью
-                price_match_naked = (
-                    re.match(r"^([4-5][0-9](?:\.\d{1,2})?)$", line)
-                    if not (price_match_uah or price_match_text)
+                advertiser_ids.extend(matches)
+                logger.info(f"📦 Found {len(matches)} IDs in storage")
+        except Exception as e:
+            logger.debug(f"Storage extraction failed: {e}")
+
+        # Method 2: Extract from DOM links
+        try:
+            links = self.driver.execute_script("""
+                return Array.from(document.querySelectorAll('a[href*="advertiserNo"]'))
+                    .map(link => {
+                        let match = link.href.match(/advertiserNo=([a-f0-9s]+)/);
+                        return match ? match[1] : null;
+                    })
+                    .filter(id => id);
+            """)
+            if links:
+                advertiser_ids.extend(links)
+                logger.info(f"🔗 Found {len(links)} IDs in links")
+        except Exception as e:
+            logger.debug(f"Link extraction failed: {e}")
+
+        # Method 3: Extract from HTML source
+        html_matches = re.findall(r'advertiserNo["\s:=]+(s[a-f0-9]{32,})', page_source)
+        if html_matches:
+            advertiser_ids.extend(html_matches)
+            logger.info(f"📄 Found {len(html_matches)} IDs in HTML source")
+
+        # Remove duplicates while preserving order
+        unique_ids = list(dict.fromkeys(advertiser_ids))
+
+        if unique_ids:
+            logger.info(f"✅ Total unique advertiser IDs: {len(unique_ids)}")
+            logger.info(f"First 3: {unique_ids[:3]}")
+
+        return unique_ids
+
+    def _parse_offers(
+        self, page_text: str, page_source: str, advertiser_ids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """Parse offers from page text with improved pattern matching"""
+        offers = []
+        lines = page_text.split("\n")
+
+        # Extract patterns
+        price_patterns = self._extract_price_patterns(lines)
+        username_patterns = self._extract_username_patterns(lines)
+        usdt_patterns = self._extract_usdt_patterns(lines)
+        limit_patterns = self._extract_limit_patterns(lines)
+
+        logger.info(
+            f"Found {len(price_patterns)} price patterns, {len(usdt_patterns)} USDT patterns, "
+            f"{len(limit_patterns)} limit patterns, {len(username_patterns)} usernames"
+        )
+
+        # Match data by position
+        for offer_idx, (price_idx, price_line, price_uah, priority) in enumerate(
+            price_patterns[:MAX_OFFERS_TO_PARSE]
+        ):
+            try:
+                username = self._find_nearest_username(price_idx, username_patterns)
+                if username == "Unknown":
+                    continue  # Skip offers without username
+
+                usdt_amount = self._find_nearest_usdt(price_idx, usdt_patterns)
+                min_limit, max_limit = self._find_nearest_limits(
+                    price_idx, limit_patterns
+                )
+
+                # Get advertiser ID
+                advertiser_no = (
+                    advertiser_ids[offer_idx]
+                    if offer_idx < len(advertiser_ids)
                     else None
                 )
-
-                price_match = price_match_uah or price_match_text or price_match_naked
-                if price_match:
-                    try:
-                        price_uah = float(price_match.group(1))
-                        # Приоритет ценам с валютными маркерами
-                        priority = 0  # высокий приоритет
-                        if price_match_uah:
-                            priority = 0  # наивысший приоритет
-                        elif price_match_text:
-                            priority = 1  # средний приоритет
-                        elif price_match_naked:
-                            priority = 2  # низкий приоритет
-
-                        if 35.0 <= price_uah <= 55.0:  # Разумные пределы для USDT-UAH
-                            price_patterns.append((i, line, price_uah, priority))
-                    except ValueError:
-                        pass
-
-                # Поиск USDT в формате: "16,406.53 USDT", "4,987.94 USDT"
-                usdt_match = re.search(r"([0-9,]+\.?\d*)\s*USDT", line)
-                if usdt_match:
-                    try:
-                        amount = float(usdt_match.group(1).replace(",", ""))
-                        if amount > 10:  # Минимальное разумное количество
-                            usdt_patterns.append((i, line, amount))
-                    except ValueError:
-                        pass
-
-                # Поиск лимитов в UAH: Binance сторона часто показывает отдельные строки для мин/макс
-                single_limit_match = re.match(r"^([0-9,]+\.?\d*)\s*UAH$", line)
-                if single_limit_match:
-                    try:
-                        limit_value = float(
-                            single_limit_match.group(1).replace(",", "")
-                        )
-                        if limit_value >= 100:  # Минимальная разумность
-                            limit_patterns.append((i, line, limit_value))
-                    except ValueError:
-                        pass
-
-                # Поиск имен пользователей (предполагаем что это строки 3-20 символов с буквами/цифрами)
-                if (
-                    3 <= len(line) <= 25
-                    and re.match(r"^[A-Za-z0-9_\-@.]+$", line)
-                    and line not in ["USDT", "UAH", "USD", "BTC", "ETH", "BNB"]
-                    and "UAH" not in line
-                    and "USDT" not in line
-                    and not re.match(r"^[0-9,.\s]+$", line)
-                ):  # Не только числа
-                    username_patterns.append((i, line))
-
-            logger.info(
-                f"Found {len(price_patterns)} price patterns, {len(usdt_patterns)} USDT patterns, {len(limit_patterns)} limit patterns, {len(username_patterns)} usernames"
-            )
-
-            # Сортируем по приоритету (0 = наивысший)
-            price_patterns.sort(key=lambda x: x[3] if len(x) > 3 else 0)
-
-            # Сопоставляем данные по позиции в тексте
-            for offer_idx, price_info in enumerate(price_patterns[:15]):
-                price_idx, price_line, price_uah = (
-                    price_info[0],
-                    price_info[1],
-                    price_info[2],
+                direct_link = self._build_offer_link(
+                    username, advertiser_no, usdt_amount
                 )
+
+                # Log mapping
+                if advertiser_no:
+                    logger.info(f"✅ {username} -> {advertiser_no[:10]}...")
+                else:
+                    logger.warning(f"❌ {username} -> NO ID (fallback to merchant)")
+
+                # Create and normalize offer
+                raw_offer = {
+                    "username": username,
+                    "price": price_uah,
+                    "available": usdt_amount,
+                    "min_amount": min_limit,
+                    "max_amount": max_limit,
+                    "link": direct_link,
+                    "timestamp": datetime.now().isoformat(),
+                }
+
+                offer = self.normalize_offer(raw_offer)
+                offers.append(offer)
+
+            except Exception as e:
+                logger.error(f"Error parsing offer at line {price_idx}: {e}")
+                continue
+
+        # Sort by price
+        offers.sort(key=lambda x: x["price"])
+        logger.info(f"Successfully parsed {len(offers)} offers")
+
+        return offers
+
+    def _extract_price_patterns(
+        self, lines: List[str]
+    ) -> List[Tuple[int, str, float, int]]:
+        """Extract price patterns with priority"""
+        patterns = []
+
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                continue
+
+            # Priority 0: With currency symbol ₴
+            match = re.match(r"^₴\s*([3-5][0-9](?:\.\d{1,2})?)$", line)
+            if match:
+                price = float(match.group(1))
+                if PRICE_RANGE[0] <= price <= PRICE_RANGE[1]:
+                    patterns.append((i, line, price, 0))
+                continue
+
+            # Priority 1: With UAH text
+            match = re.match(r"^([3-5][0-9](?:\.\d{1,2})?)\s*UAH$", line, re.IGNORECASE)
+            if match:
+                price = float(match.group(1))
+                if PRICE_RANGE[0] <= price <= PRICE_RANGE[1]:
+                    patterns.append((i, line, price, 1))
+                continue
+
+            # Priority 2: Naked numbers (careful)
+            match = re.match(r"^([4-5][0-9](?:\.\d{1,2})?)$", line)
+            if match:
+                price = float(match.group(1))
+                if PRICE_RANGE[0] <= price <= PRICE_RANGE[1]:
+                    patterns.append((i, line, price, 2))
+
+        # Sort by priority
+        patterns.sort(key=lambda x: x[3])
+        return patterns
+
+    def _extract_username_patterns(self, lines: List[str]) -> List[Tuple[int, str]]:
+        """Extract username patterns"""
+        patterns = []
+        excluded = {"USDT", "UAH", "USD", "BTC", "ETH", "BNB"}
+
+        for i, line in enumerate(lines):
+            line = line.strip()
+            min_len, max_len = USERNAME_LENGTH_RANGE
+
+            if (
+                min_len <= len(line) <= max_len
+                and re.match(r"^[A-Za-z0-9_\-@.]+$", line)
+                and line not in excluded
+                and "UAH" not in line
+                and "USDT" not in line
+                and not re.match(r"^[0-9,.\s]+$", line)
+            ):
+                patterns.append((i, line))
+
+        return patterns
+
+    def _extract_usdt_patterns(self, lines: List[str]) -> List[Tuple[int, str, float]]:
+        """Extract USDT amount patterns"""
+        patterns = []
+
+        for i, line in enumerate(lines):
+            match = re.search(r"([0-9,]+\.?\d*)\s*USDT", line)
+            if match:
                 try:
-                    # Цена уже в UAH
+                    amount = float(match.group(1).replace(",", ""))
+                    if amount > MIN_USDT_AMOUNT:
+                        patterns.append((i, line, amount))
+                except ValueError:
+                    pass
 
-                    # Ищем ближайшее имя пользователя
-                    username = "Unknown"
-                    min_distance = float("inf")
+        return patterns
 
-                    # Проверяем около 20 строк вокруг цены
-                    for user_idx, user_name in username_patterns:
-                        distance = abs(user_idx - price_idx)
-                        if distance < min_distance and distance <= 20:
-                            username = user_name
-                            min_distance = distance
+    def _extract_limit_patterns(self, lines: List[str]) -> List[Tuple[int, str, float]]:
+        """Extract limit patterns"""
+        patterns = []
 
-                    # Ищем ближайшее количество USDT
-                    usdt_amount = 0.0
-                    min_distance = float("inf")
+        for i, line in enumerate(lines):
+            match = re.match(r"^([0-9,]+\.?\d*)\s*UAH$", line)
+            if match:
+                try:
+                    value = float(match.group(1).replace(",", ""))
+                    if value >= MIN_LIMIT_VALUE:
+                        patterns.append((i, line, value))
+                except ValueError:
+                    pass
 
-                    for usdt_idx, usdt_line, amount in usdt_patterns:
-                        distance = abs(usdt_idx - price_idx)
-                        if distance < min_distance and distance <= 15:
-                            usdt_amount = amount
-                            min_distance = distance
+        return patterns
 
-                    # Ищем ближайшие лимиты в UAH (отдельные значения)
-                    limits_nearby = []
+    def _find_nearest_username(
+        self, price_idx: int, username_patterns: List[Tuple[int, str]]
+    ) -> str:
+        """Find nearest username to price line"""
+        username = "Unknown"
+        min_distance = float("inf")
 
-                    for limit_idx, limit_line, limit_value in limit_patterns:
-                        distance = abs(limit_idx - price_idx)
-                        if distance <= 15:  # В пределах 15 строк
-                            limits_nearby.append((distance, limit_value))
+        for user_idx, user_name in username_patterns:
+            distance = abs(user_idx - price_idx)
+            if distance < min_distance and distance <= SEARCH_RADIUS:
+                username = user_name
+                min_distance = distance
 
-                    # Сортируем по расстоянию и берем первые два
-                    limits_nearby.sort(key=lambda x: x[0])
+        return username
 
-                    min_limit_uah = limits_nearby[0][1] if limits_nearby else 1000.0
-                    max_limit_uah = (
-                        limits_nearby[1][1]
-                        if len(limits_nearby) > 1
-                        else min_limit_uah * 10
-                    )
+    def _find_nearest_usdt(
+        self, price_idx: int, usdt_patterns: List[Tuple[int, str, float]]
+    ) -> float:
+        """Find nearest USDT amount to price line"""
+        usdt_amount = 100.0  # Default
+        min_distance = float("inf")
 
-                    # Если мин больше макс, поменяем местами
-                    if min_limit_uah > max_limit_uah:
-                        min_limit_uah, max_limit_uah = max_limit_uah, min_limit_uah
+        for usdt_idx, _, amount in usdt_patterns:
+            distance = abs(usdt_idx - price_idx)
+            if distance < min_distance and distance <= USDT_SEARCH_RADIUS:
+                usdt_amount = amount
+                min_distance = distance
 
-                    # Используем значения по умолчанию если не нашли
-                    if min_limit_uah == 0.0:
-                        min_limit_uah = 1000.0
-                    if max_limit_uah == 0.0:
-                        max_limit_uah = 100000.0
+        return usdt_amount
 
-                    # Пропускаем предложения без распознанного имени (часто это промо-блоки)
-                    if username == "Unknown":
-                        continue
+    def _find_nearest_limits(
+        self, price_idx: int, limit_patterns: List[Tuple[int, str, float]]
+    ) -> Tuple[float, float]:
+        """Find nearest limit values to price line"""
+        limits_nearby = []
 
-                    # Получаем advertiserNo для прямой ссылки
-                    advertiser_no = (
-                        advertiser_ids[offer_idx]
-                        if offer_idx < len(advertiser_ids)
-                        else None
-                    )
+        for limit_idx, _, limit_value in limit_patterns:
+            distance = abs(limit_idx - price_idx)
+            if distance <= LIMIT_SEARCH_RADIUS:
+                limits_nearby.append((distance, limit_value))
 
-                    # Формируем правильную прямую ссылку
-                    if advertiser_no:
-                        # ПРАВИЛЬНАЯ ссылка с advertiserNo
-                        direct_link = f"https://c2c.binance.com/ru/advertiserDetail?advertiserNo={advertiser_no}"
-                        logger.info(f"✅ {username} -> {advertiser_no[:10]}...")
-                    else:
-                        # Fallback к старому формату
-                        direct_link = f"{self.base_url}&merchant={username}&amount={usdt_amount if usdt_amount > 0 else 100}"
-                        logger.warning(f"❌ {username} -> NO ID (fallback to merchant)")
+        limits_nearby.sort(key=lambda x: x[0])
 
-                    # Создаем сырое предложение
-                    raw_offer = {
-                        "username": username,
-                        "price": price_uah,
-                        "available": usdt_amount if usdt_amount > 0 else 100.0,
-                        "min_amount": min_limit_uah,
-                        "max_amount": max_limit_uah,
-                        "link": direct_link,
-                        "timestamp": datetime.now().isoformat(),
-                    }
+        min_limit = limits_nearby[0][1] if limits_nearby else 1000.0
+        max_limit = limits_nearby[1][1] if len(limits_nearby) > 1 else min_limit * 10
 
-                    # Нормализуем через базовый класс
-                    offer = self.normalize_offer(raw_offer)
+        # Ensure min < max
+        if min_limit > max_limit:
+            min_limit, max_limit = max_limit, min_limit
 
-                    offers.append(offer)
+        return min_limit, max_limit
 
-                except Exception as e:
-                    logger.error(f"Error parsing offer at price line {price_idx}: {e}")
-                    continue
-
-            # Сортируем по цене (лучшие предложения первыми)
-            offers.sort(key=lambda x: x["price"])
-
-            logger.info(f"Successfully parsed {len(offers)} offers")
-            return offers
-
-        except Exception as e:
-            logger.error(f"Error in parse_offers_from_page_text: {e}")
-            return []
+    def _build_offer_link(
+        self, username: str, advertiser_no: str, usdt_amount: float
+    ) -> str:
+        """Build direct link to offer"""
+        if advertiser_no:
+            return f"https://c2c.binance.com/ru/advertiserDetail?advertiserNo={advertiser_no}"
+        else:
+            return f"{self.base_url}&merchant={username}&amount={usdt_amount}"
 
     def format_offer_message(self, offer: Dict[str, Any]) -> str:
         """Format Binance offer for user notification"""
@@ -466,14 +513,23 @@ class BinanceP2P(BaseExchange):
 🔗 Прямая ссылка: <a href='{link}'>Купить у {username}</a>
 ⚡ Быстрая ссылка: {self.base_url}""".strip()
 
-    def cleanup_if_needed(self):
-        """Smart cleanup - only if browser has been idle"""
+    def _force_cleanup_browser(self):
+        """Force cleanup browser immediately after request"""
         if self.driver:
             try:
-                # Проверяем, что браузер еще отвечает
+                self.driver.quit()
+                logger.debug("Binance browser closed after request")
+            except Exception as e:
+                logger.debug(f"Error closing Binance browser: {e}")
+            finally:
+                self.driver = None
+
+    def cleanup_if_needed(self):
+        """Smart cleanup - only if browser is not responding"""
+        if self.driver:
+            try:
                 self.driver.current_url
             except Exception:
-                # Браузер не отвечает, очищаем
                 logger.warning("Binance browser not responding, cleaning up")
                 try:
                     self.driver.quit()

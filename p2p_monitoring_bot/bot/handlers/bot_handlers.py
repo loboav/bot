@@ -48,15 +48,14 @@ class BotHandlers:
 ✅ Binance (реальные данные через браузер)
 🔄 OKX, MEXC, BingX (скоро)
 
-⚙️ <b>Команды:</b>
-/check - Получить СВЕЖИЕ предложения с всех активных бирж
+⚙️ <b>Основные команды:</b>
+/check - Быстро проверить предложения (из кэша)
+/refresh - Обновить данные принудительно (20-40 сек)
 /exchanges - Выбрать биржи для мониторинга
 /settings - Настроить диапазон курса и автомониторинг
-/status - Показать текущие настройки
-/help - Показать все команды
 🤖 /automonitor - Управление автомониторингом
 
-💡 <b>Начните с /check для получения СВЕЖИХ предложений!</b>
+💡 <b>Совет:</b> Используйте /check для быстрой проверки, /refresh если нужны самые свежие данные!
         """.strip()
 
         await update.message.reply_text(welcome_message, parse_mode="HTML")
@@ -80,13 +79,14 @@ class BotHandlers:
         # Send "checking" message
         exchanges_text = ", ".join([ex.title() for ex in active_exchanges])
         checking_msg = await update.message.reply_text(
-            f"🔄 Получаю СВЕЖИЕ данные с: {exchanges_text}...\n⏳ Это может занять 15-30 секунд"
+            f"🔄 Получаю данные с: {exchanges_text}...\n⚡ Использую кэш автомониторинга (быстро!)"
         )
 
         try:
-            # Get combined offers from all active exchanges with FORCE REFRESH
+            # ✅ FIX: Use cached data from automonitor (no force_refresh)
+            # This allows /check to work instantly without blocking
             offers = await self.bot.exchange_manager.get_combined_offers(
-                active_exchanges, force_refresh=True
+                active_exchanges, force_refresh=False
             )
 
             if not offers:
@@ -169,7 +169,21 @@ class BotHandlers:
                 if len(filtered_offers) > 5:
                     response += f"... и еще {len(filtered_offers) - 5} предложений\n\n"
 
-                response += "💡 Нажмите на прямые ссылки для быстрой покупки!\n🔄 Данные обновлены только что!"
+                # Check cache age
+                from datetime import datetime, timedelta
+
+                cache_age = "только что"
+                for exchange_name in active_exchanges:
+                    exchange = self.bot.exchange_manager.get_exchange(exchange_name)
+                    if exchange and exchange.last_update:
+                        age_seconds = (
+                            datetime.now() - exchange.last_update
+                        ).total_seconds()
+                        if age_seconds > 60:
+                            cache_age = f"{int(age_seconds)} сек назад"
+                        break
+
+                response += f"💡 Нажмите на прямые ссылки для быстрой покупки!\n🕐 Данные: {cache_age}"
 
             await checking_msg.edit_text(
                 response, parse_mode="HTML", disable_web_page_preview=True
@@ -277,6 +291,88 @@ class BotHandlers:
         else:
             await update.message.reply_text(status_text, parse_mode="HTML")
 
+    async def refresh_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /refresh command - force refresh data"""
+        user_id = update.effective_user.id
+        user_data = self.bot.user_manager.get_user_data(user_id)
+
+        # Get active exchanges for user
+        active_exchanges = user_data.get(
+            "active_exchanges", ["bybit", "binance", "bitget"]
+        )
+
+        # Send "refreshing" message
+        exchanges_text = ", ".join([ex.title() for ex in active_exchanges])
+        refreshing_msg = await update.message.reply_text(
+            f"🔄 Принудительное обновление данных с: {exchanges_text}...\n⏳ Это может занять 20-40 секунд"
+        )
+
+        try:
+            # Force refresh from all active exchanges
+            offers = await self.bot.exchange_manager.get_combined_offers(
+                active_exchanges, force_refresh=True
+            )
+
+            if not offers:
+                await refreshing_msg.edit_text(
+                    f"❌ Не удалось получить предложения с {exchanges_text}."
+                )
+                return
+
+            # Filter offers by user's rate range
+            filtered_offers = []
+            for offer in offers:
+                # Price filter
+                if not (
+                    user_data["min_rate"] <= offer["price"] <= user_data["max_rate"]
+                ):
+                    continue
+
+                # Limits filter
+                offer_min = offer.get("min_amount", 0)
+                offer_max = offer.get("max_amount", 999999)
+                user_min_limit = user_data.get("min_limit", 0)
+                user_max_limit = user_data.get("max_limit", 999999)
+
+                if offer_max >= user_min_limit and offer_min <= user_max_limit:
+                    filtered_offers.append(offer)
+
+            # Prepare response
+            if not filtered_offers:
+                response = f"📅 Обновлено! Найдено {len(offers)} предложений, но ни одно не подходит по вашим критериям.\n\n"
+                response += "💡 Используйте /settings для изменения диапазона"
+            else:
+                # Sort by price
+                filtered_offers.sort(key=lambda x: x["price"])
+
+                response = f"✅ <b>Данные обновлены! Найдено {len(filtered_offers)} предложений</b>\n\n"
+
+                # Show top 5 offers
+                for i, offer in enumerate(filtered_offers[:5], 1):
+                    exchange_name = offer.get("exchange", "bybit")
+                    exchange = self.bot.exchange_manager.get_exchange(exchange_name)
+
+                    if exchange:
+                        offer_text = exchange.format_offer_message(offer)
+                    else:
+                        offer_text = self._format_generic_offer(offer)
+
+                    response += f"<b>{i}.</b> {offer_text}\n\n"
+
+                if len(filtered_offers) > 5:
+                    response += f"... и еще {len(filtered_offers) - 5} предложений\n\n"
+
+                response += "💡 Данные обновлены ПРЯМО СЕЙЧАС!"
+
+            await refreshing_msg.edit_text(
+                response, parse_mode="HTML", disable_web_page_preview=True
+            )
+
+        except Exception as e:
+            await refreshing_msg.edit_text(
+                f"❌ Ошибка при обновлении данных: {str(e)[:100]}..."
+            )
+
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command"""
         help_text = """
@@ -284,21 +380,27 @@ class BotHandlers:
 
 🏠 <b>/start</b> - Приветствие и инструкция
 📱 <b>/menu</b> - Показать меню команд
-🔍 <b>/check</b> - Получить СВЕЖИЕ P2P предложения (без кэша)
+
+⚡ <b>БЫСТРАЯ ПРОВЕРКА:</b>
+🔍 <b>/check</b> - Быстро проверить предложения (использует кэш)
+🔄 <b>/refresh</b> - Обновить данные принудительно (20-40 сек)
+
+⚙️ <b>НАСТРОЙКИ:</b>
 🏦 <b>/exchanges</b> - Выбрать биржи для мониторинга
 ⚙️ <b>/settings</b> - Настроить диапазон курса и автомониторинг
 🤖 <b>/automonitor</b> - Управление автомониторингом
 📊 <b>/status</b> - Показать текущие настройки
 ❓ <b>/help</b> - Показать это сообщение
 
-💡 <b>Как использовать:</b>
-1. Настройте диапазон курса через /settings
-2. Проверяйте предложения командой /check
-3. Получайте прямые ссылки для покупки!
+💡 <b>В чем разница:</b>
+• <b>/check</b> - моментально показывает данные из кэша (автомониторинг обновляет каждые 20-60 сек)
+• <b>/refresh</b> - парсит биржи заново, но занимает время (используй если нужны САМЫЕ свежие данные)
+
+🎯 <b>Рекомендация:</b>
+Используй <b>/check</b> для быстрой проверки. Автомониторинг и так постоянно обновляет данные!
+Используй <b>/refresh</b> только если нужны данные "прямо сейчас" и готов подождать.
 
 📱 <b>Меню команд:</b> Используйте /menu для быстрого доступа к кнопкам команд!
-
-🎯 <b>Пример:</b> Если установить диапазон 42.0-43.0 UAH, бот покажет только предложения в этих пределах.
         """.strip()
 
         await update.message.reply_text(help_text, parse_mode="HTML")
@@ -853,13 +955,14 @@ class BotHandlers:
     def register_handlers(self, application):
         """Register all handlers"""
         application.add_handler(CommandHandler("start", self.start_command))
-        application.add_handler(CommandHandler("menu", self.menu_command))
         application.add_handler(CommandHandler("check", self.check_command))
-        application.add_handler(CommandHandler("exchanges", self.exchanges_command))
+        application.add_handler(CommandHandler("refresh", self.refresh_command))
         application.add_handler(CommandHandler("settings", self.settings_command))
-        application.add_handler(CommandHandler("automonitor", self.automonitor_command))
         application.add_handler(CommandHandler("status", self.status_command))
         application.add_handler(CommandHandler("help", self.help_command))
+        application.add_handler(CommandHandler("automonitor", self.automonitor_command))
+        application.add_handler(CommandHandler("exchanges", self.exchanges_command))
+        application.add_handler(CommandHandler("menu", self.menu_command))
         application.add_handler(CallbackQueryHandler(self.button_callback))
         application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.message_handler)

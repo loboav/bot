@@ -39,7 +39,8 @@
     "last_notification_time": null,
     "notification_count_hour": 0,
     "active_exchanges": [
-      "binance"
+      "binance",
+      "bybit"
     ],
     "last_notification": null,
     "auto_monitor_min_rate": 40.0,
