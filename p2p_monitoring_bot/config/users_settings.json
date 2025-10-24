@@ -39,13 +39,12 @@
     "last_notification_time": null,
     "notification_count_hour": 0,
     "active_exchanges": [
-      "bitget",
       "bybit",
       "binance"
     ],
     "last_notification": null,
     "auto_monitor_min_rate": 40.0,
-    "auto_monitor_max_rate": 44.0,
+    "auto_monitor_max_rate": 43.5,
     "auto_monitor_min_limit": 700.0,
     "auto_monitor_max_limit": 20000.0
   },
