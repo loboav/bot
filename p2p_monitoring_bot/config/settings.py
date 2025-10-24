@@ -30,10 +30,9 @@ OFFERS_CACHE_FILE = "temp/offers_cache.json"
 # Логирование
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")  # DEBUG, INFO, WARNING, ERROR
 
-# Автомониторинг настройки
-AUTO_MONITORING_INTERVAL = int(os.getenv("AUTO_MONITORING_INTERVAL", "120"))  # 2 минуты для тестирования
-AUTO_MONITORING_SAFE_INTERVAL = int(os.getenv("AUTO_MONITORING_SAFE_INTERVAL", "60"))  # минимум 1 минута
-MAX_NOTIFICATIONS_PER_HOUR = int(os.getenv("MAX_NOTIFICATIONS_PER_HOUR", "12"))  # не более 12 уведомлений в час
+# Автомониторинг настройки (БЕЗ ЛИМИТОВ - для личного использования)
+AUTO_MONITORING_INTERVAL = int(os.getenv("AUTO_MONITORING_INTERVAL", "20"))  # 20 секунд - быстрая проверка для лучших предложений
+AUTO_MONITOR_TOP_OFFERS_LIMIT = int(os.getenv("AUTO_MONITOR_TOP_OFFERS_LIMIT", "5"))  # проверять только топ 5 предложений
 
 # Bitget API настройки (установите в .env файле)
 BITGET_API_KEY = os.getenv("BITGET_API_KEY", "")
@@ -42,14 +41,20 @@ BITGET_PASSPHRASE = os.getenv("BITGET_PASSPHRASE", "")
 
 # Настройки по умолчанию для пользователей
 DEFAULT_USER_SETTINGS = {
+    # Основные настройки (для /check)
     'min_rate': 35.0,
     'max_rate': 43.0,
     'min_limit': 5000.0,     # Минимальный лимит в UAH
     'max_limit': 100000.0,   # Максимальный лимит в UAH  
+    
+    # Отдельные настройки для автомониторинга (узкий диапазон для лучших сделок)
+    'auto_monitor_min_rate': 40.5,      # Узкий диапазон цены (только самые выгодные)
+    'auto_monitor_max_rate': 41.5,
+    'auto_monitor_min_limit': 10000.0,  # Узкие лимиты для автомониторинга
+    'auto_monitor_max_limit': 50000.0,
+    
     'notifications_enabled': True,
     'auto_monitoring_enabled': False,  # Автомониторинг выключен по умолчанию
-    'last_notification_time': None,  # Время последнего уведомления
-    'notification_count_hour': 0,    # Счетчик уведомлений за час
     'active_exchanges': ['bybit', 'bitget', 'binance']  # Теперь поддерживаем три биржи
 }
 
