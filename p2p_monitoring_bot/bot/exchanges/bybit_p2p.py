@@ -452,8 +452,7 @@ class ByBitP2P(BaseExchange):
 💲 Цена: <b>{price:.2f} UAH</b> за USDT
 📊 Доступно: <b>{available:.1f} USDT</b>
 💳 Лимиты: {min_amount:.0f} - {max_amount:.0f} UAH
-🔗 Прямая ссылка: <a href='{link}'>Купить у {username}</a>
-⚡ Быстрая ссылка: {self.base_url}""".strip()
+🔗 Прямая ссылка: <a href='{link}'>Купить у {username}</a>""".strip()
 
     def _force_cleanup_browser(self):
         """Force cleanup browser immediately after request - DEPRECATED, используем cleanup_if_needed"""

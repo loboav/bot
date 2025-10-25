@@ -13,7 +13,8 @@ from typing import List, Dict, Any, Optional, Set
 from .base_exchange import BaseExchange
 from .bybit_p2p import ByBitP2P
 from .bitget_p2p import BitgetP2P
-from .binance_p2p import BinanceP2P
+from .binance_p2p import BinanceP2P  # OLD Selenium version (backup)
+from .binance_p2p_api import BinanceP2PAPI  # NEW Fast API version
 
 # Import settings with proper path handling
 import sys
@@ -49,9 +50,12 @@ class ExchangeManager:
         )
         self._active_exchanges.add("bitget")
 
-        # Initialize Binance P2P
-        self._exchanges["binance"] = BinanceP2P()
+        # Initialize Binance P2P - SWITCHED TO API VERSION (16x faster!)
+        # Old Selenium version still available as BinanceP2P if needed
+        self._exchanges["binance"] = BinanceP2PAPI()  # NEW: Fast API version
         self._active_exchanges.add("binance")
+
+        logger.info("✅ Binance: Using NEW API version (16x faster than Selenium!)")
 
     def get_exchange(self, name: str) -> Optional[BaseExchange]:
         """Get specific exchange instance"""

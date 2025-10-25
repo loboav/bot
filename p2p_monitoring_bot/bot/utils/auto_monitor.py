@@ -252,8 +252,13 @@ class AutoMonitor:
                 f"🚨 <b>Автомониторинг: найдено {len(offers)} предложений!</b>\n\n"
             )
 
+            # Collect unique exchanges from offers
+            exchanges_in_offers = set()
+
             for i, offer in enumerate(offers, 1):
                 exchange_name = offer.get("exchange", "unknown")
+                exchanges_in_offers.add(exchange_name)
+
                 exchange = self.bot.exchange_manager.get_exchange(exchange_name)
 
                 if exchange:
@@ -276,7 +281,20 @@ class AutoMonitor:
 
                 message += f"<b>{i}.</b> {offer_text}\n\n"
 
-            message += "⚡ Данные обновлены только что!\n"
+            # Add quick links for exchanges that appeared in offers
+            exchange_links = {
+                "binance": "https://p2p.binance.com/ru/trade/all-payments/USDT?fiat=UAH",
+                "bybit": "https://www.bybit.com/fiat/trade/otc/?actionType=1&token=USDT&fiat=UAH&paymentMethod=",
+                "bitget": "https://www.bitget.com/ru/p2p-trade?paymethodIds=-1&fiatName=UAH",
+            }
+
+            for exchange_name in sorted(exchanges_in_offers):
+                if exchange_name in exchange_links:
+                    exchange_title = exchange_name.title()
+                    link = exchange_links[exchange_name]
+                    message += f"⚡ Быстрая ссылка: <a href='{link}'>Все объявления {exchange_title} P2P</a>\n"
+
+            message += "\n⚡ Данные обновлены только что!\n"
             message += f"🕐 Время проверки: {datetime.now().strftime('%H:%M:%S')}"
 
             # Send notification via Telegram
