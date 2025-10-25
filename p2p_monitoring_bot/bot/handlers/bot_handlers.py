@@ -320,6 +320,13 @@ class BotHandlers:
             "active_exchanges", ["bybit", "binance", "bitget"]
         )
 
+        # Exchange P2P page links
+        exchange_links = {
+            "binance": "https://p2p.binance.com/ru/trade/all-payments/USDT?fiat=UAH",
+            "bybit": "https://www.bybit.com/fiat/trade/otc/?actionType=1&token=USDT&fiat=UAH&paymentMethod=",
+            "bitget": "https://www.bitget.com/ru/p2p-trade?paymethodIds=-1&fiatName=UAH",
+        }
+
         # Send "refreshing" message
         exchanges_text = ", ".join([ex.title() for ex in active_exchanges])
         refreshing_msg = await update.message.reply_text(
@@ -366,8 +373,12 @@ class BotHandlers:
 
                 response = f"✅ <b>Данные обновлены! Найдено {len(filtered_offers)} предложений</b>\n\n"
 
+                # Collect unique exchanges from filtered offers
+                exchanges_in_offers = set()
+
                 # Show top 5 offers
                 for i, offer in enumerate(filtered_offers[:5], 1):
+                    exchanges_in_offers.add(offer.get("exchange", "unknown"))
                     exchange_name = offer.get("exchange", "bybit")
                     exchange = self.bot.exchange_manager.get_exchange(exchange_name)
 
@@ -381,7 +392,14 @@ class BotHandlers:
                 if len(filtered_offers) > 5:
                     response += f"... и еще {len(filtered_offers) - 5} предложений\n\n"
 
-                response += "💡 Данные обновлены ПРЯМО СЕЙЧАС!"
+                # Add quick links for exchanges that appeared in offers
+                for exchange_name in sorted(exchanges_in_offers):
+                    if exchange_name in exchange_links:
+                        exchange_title = exchange_name.title()
+                        link = exchange_links[exchange_name]
+                        response += f"⚡ Быстрая ссылка: <a href='{link}'>Все объявления {exchange_title} P2P</a>\n"
+
+                response += "\n💡 Данные обновлены ПРЯМО СЕЙЧАС!"
 
             await refreshing_msg.edit_text(
                 response, parse_mode="HTML", disable_web_page_preview=True
