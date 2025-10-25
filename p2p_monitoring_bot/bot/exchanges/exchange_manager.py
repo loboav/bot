@@ -11,7 +11,8 @@ import logging
 from typing import List, Dict, Any, Optional, Set
 
 from .base_exchange import BaseExchange
-from .bybit_p2p import ByBitP2P
+from .bybit_p2p import ByBitP2P  # OLD Selenium version (backup)
+from .bybit_p2p_api import ByBitP2PAPI  # NEW Fast API version
 from .bitget_p2p import BitgetP2P
 from .binance_p2p import BinanceP2P  # OLD Selenium version (backup)
 from .binance_p2p_api import BinanceP2PAPI  # NEW Fast API version
@@ -38,9 +39,12 @@ class ExchangeManager:
 
     def _initialize_exchanges(self):
         """Initialize all available exchanges"""
-        # Active exchanges
-        self._exchanges["bybit"] = ByBitP2P()
+        # Initialize ByBit P2P - SWITCHED TO API VERSION (faster!)
+        # Old Selenium version still available as ByBitP2P if needed
+        self._exchanges["bybit"] = ByBitP2PAPI()  # NEW: Fast API version
         self._active_exchanges.add("bybit")
+
+        logger.info("✅ ByBit: Using NEW API version (faster than Selenium!)")
 
         # Initialize Bitget with API credentials
         self._exchanges["bitget"] = BitgetP2P(

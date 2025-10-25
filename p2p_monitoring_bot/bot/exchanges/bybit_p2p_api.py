@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Binance P2P API Integration
-============================
+ByBit P2P API Integration
+==========================
 
-Fast API-based integration for Binance P2P (no Selenium needed!)
-This is a new implementation that works alongside the old binance_p2p.py
+Fast API-based integration for ByBit P2P (no Selenium needed!)
+This is a new implementation that works alongside the old bybit_p2p.py
 """
 
 import asyncio
@@ -24,23 +24,23 @@ from .base_exchange import BaseExchange
 logger = logging.getLogger(__name__)
 
 # API Configuration
-BINANCE_API_URL = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
+BYBIT_API_URL = "https://api2.bybit.com/fiat/otc/item/online"
 CACHE_TTL_MINUTES = 5
 REQUEST_TIMEOUT = 15  # seconds
 
 
-class BinanceP2PAPI(BaseExchange):
+class ByBitP2PAPI(BaseExchange):
     """
-    Binance P2P integration using official API
+    ByBit P2P integration using official API
 
     Much faster and more reliable than Selenium parsing!
     """
 
     def __init__(self):
-        super().__init__("binance")
-        self.api_url = BINANCE_API_URL
+        super().__init__("bybit")
+        self.api_url = BYBIT_API_URL
         self.session = None
-        logger.info("🚀 Initialized Binance P2P API (NEW FAST VERSION!)")
+        logger.info("🚀 Initialized ByBit P2P API (NEW FAST VERSION!)")
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session"""
@@ -49,13 +49,16 @@ class BinanceP2PAPI(BaseExchange):
                 headers={
                     "Content-Type": "application/json",
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept": "application/json",
+                    "Origin": "https://www.bybit.com",
+                    "Referer": "https://www.bybit.com/",
                 }
             )
         return self.session
 
     async def get_offers(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
         """
-        Get P2P offers from Binance API
+        Get P2P offers from ByBit API
 
         Args:
             force_refresh: If True, ignore cache and fetch fresh data
@@ -66,23 +69,24 @@ class BinanceP2PAPI(BaseExchange):
         # Check cache first
         if not force_refresh and self._is_cache_valid():
             logger.info(
-                f"✅ Using cached Binance API data ({len(self.offers_cache)} offers)"
+                f"✅ Using cached ByBit API data ({len(self.offers_cache)} offers)"
             )
             return self.offers_cache
 
         try:
-            logger.info("🔄 Fetching Binance P2P offers via API...")
+            logger.info("🔄 Fetching ByBit P2P offers via API...")
             start_time = datetime.now()
 
             # Prepare request payload
             payload = {
-                "asset": "USDT",
-                "fiat": "UAH",
-                "merchantCheck": False,
-                "page": 1,
-                "rows": 20,  # Get top 20 offers
-                "tradeType": "BUY",  # We want to BUY USDT (sell UAH)
-                "transAmount": "",
+                "userId": "",
+                "tokenId": "USDT",
+                "currencyId": "UAH",
+                "payment": [],
+                "side": "1",  # 1 = Sell (they sell USDT, we buy)
+                "size": "20",  # Get top 20 offers
+                "page": "1",
+                "amount": "",
             }
 
             session = await self._get_session()
@@ -94,7 +98,7 @@ class BinanceP2PAPI(BaseExchange):
                 timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
             ) as response:
                 if response.status != 200:
-                    logger.error(f"❌ Binance API returned status {response.status}")
+                    logger.error(f"❌ ByBit API returned status {response.status}")
                     return self.offers_cache
 
                 data = await response.json()
@@ -109,26 +113,24 @@ class BinanceP2PAPI(BaseExchange):
                     self.offers_cache = offers
                     self.last_update = datetime.now()
                     logger.info(
-                        f"✅ Binance API: Got {len(offers)} offers in {duration:.2f}s "
-                        f"(🚀 {20 / duration:.0f}x faster than Selenium!)"
+                        f"✅ ByBit API: Got {len(offers)} offers in {duration:.2f}s "
+                        f"(🚀 {10 / duration:.0f}x faster than Selenium!)"
                     )
                 else:
-                    logger.warning(f"⚠️ No offers from Binance API")
+                    logger.warning(f"⚠️ No offers from ByBit API")
 
                 return offers if offers else self.offers_cache
 
         except asyncio.TimeoutError:
-            logger.error(
-                f"⏱️ Binance API timeout after {REQUEST_TIMEOUT}s - using cache"
-            )
+            logger.error(f"⏱️ ByBit API timeout after {REQUEST_TIMEOUT}s - using cache")
             return self.offers_cache
 
         except aiohttp.ClientError as e:
-            logger.error(f"🔌 Binance API connection error: {e} - using cache")
+            logger.error(f"🔌 ByBit API connection error: {e} - using cache")
             return self.offers_cache
 
         except Exception as e:
-            logger.error(f"❌ Binance API error: {e} - using cache")
+            logger.error(f"❌ ByBit API error: {e} - using cache")
             import traceback
 
             logger.debug(traceback.format_exc())
@@ -136,7 +138,7 @@ class BinanceP2PAPI(BaseExchange):
 
     def _parse_api_response(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Parse Binance API response into normalized offers
+        Parse ByBit API response into normalized offers
 
         Args:
             data: Raw API response
@@ -148,42 +150,49 @@ class BinanceP2PAPI(BaseExchange):
 
         try:
             # Check if response is successful
-            if not data.get("success", False):
+            ret_code = data.get("ret_code")
+            if ret_code != 0:
                 logger.error(
-                    f"API returned success=false: {data.get('message', 'Unknown error')}"
+                    f"API returned ret_code={ret_code}: {data.get('ret_msg', 'Unknown error')}"
                 )
                 return offers
 
-            # Extract ads list
-            ads = data.get("data", [])
+            # Extract items list
+            result = data.get("result", {})
+            items = result.get("items", [])
 
-            if not ads:
-                logger.warning("No ads in API response")
+            if not items:
+                logger.warning("No items in API response")
                 return offers
 
-            logger.debug(f"Processing {len(ads)} ads from Binance API...")
+            logger.debug(f"Processing {len(items)} items from ByBit API...")
 
-            for ad in ads:
+            for item in items:
                 try:
-                    # Extract advertiser info
-                    advertiser = ad.get("advertiser", {})
-                    username = advertiser.get("nickName", "Unknown")
-                    user_no = advertiser.get("userNo", "")
+                    # Check if seller is online (важно!)
+                    is_online = item.get("isOnline", False)
+                    if not is_online:
+                        logger.debug(
+                            f"Skipping offline seller: {item.get('nickName', 'Unknown')}"
+                        )
+                        continue
+
+                    # Extract user info
+                    username = item.get("nickName", "Unknown")
+                    user_mask_id = item.get("userMaskId", "")
 
                     # Extract price and amounts
-                    price = float(ad.get("adv", {}).get("price", 0))
+                    price = float(item.get("price", 0))
 
                     # Available amount in USDT
-                    available_usdt = float(ad.get("adv", {}).get("surplusAmount", 0))
+                    available_usdt = float(item.get("lastQuantity", 0))
 
                     # Trade limits in fiat (UAH)
-                    min_amount = float(ad.get("adv", {}).get("minSingleTransAmount", 0))
-                    max_amount = float(
-                        ad.get("adv", {}).get("dynamicMaxSingleTransAmount", 0)
-                    )
+                    min_amount = float(item.get("minAmount", 0))
+                    max_amount = float(item.get("maxAmount", 0))
 
                     # Build direct link to offer
-                    link = self._build_offer_link(username, user_no)
+                    link = self._build_offer_link(username, user_mask_id)
 
                     # Validate offer data
                     if price <= 0 or available_usdt <= 0:
@@ -194,7 +203,7 @@ class BinanceP2PAPI(BaseExchange):
 
                     # Create normalized offer
                     offer = {
-                        "exchange": "binance",
+                        "exchange": "bybit",
                         "username": username,
                         "price": price,
                         "available": available_usdt,
@@ -202,7 +211,7 @@ class BinanceP2PAPI(BaseExchange):
                         "max_amount": max_amount,
                         "link": link,
                         "timestamp": datetime.now().isoformat(),
-                        "raw_data": ad,  # Keep raw data for debugging
+                        "raw_data": item,  # Keep raw data for debugging
                     }
 
                     offers.append(offer)
@@ -212,7 +221,7 @@ class BinanceP2PAPI(BaseExchange):
                     )
 
                 except (ValueError, KeyError, TypeError) as e:
-                    logger.warning(f"⚠️ Error parsing ad: {e}")
+                    logger.warning(f"⚠️ Error parsing item: {e}")
                     continue
 
             # Sort by price (best offers first)
@@ -228,23 +237,23 @@ class BinanceP2PAPI(BaseExchange):
 
         return offers
 
-    def _build_offer_link(self, username: str, user_no: str) -> str:
+    def _build_offer_link(self, username: str, user_mask_id: str) -> str:
         """
-        Build direct link to Binance P2P advertiser
+        Build direct link to ByBit P2P offer
 
         Args:
             username: Advertiser username
-            user_no: User number (userNo from API, includes 's' prefix)
+            user_mask_id: User mask ID from API
 
         Returns:
             Direct link to advertiser page
         """
-        if user_no:
-            # Correct format: c2c.binance.com with userNo (includes 's' prefix)
-            return f"https://c2c.binance.com/ru/advertiserDetail?advertiserNo={user_no}"
+        if user_mask_id:
+            # Direct link to user's P2P profile with currency pair
+            return f"https://www.bybit.com/fiat/trade/otc/profile/{user_mask_id}/USDT/UAH/item"
         else:
             # Fallback to general P2P page
-            return "https://p2p.binance.com/ru/trade/all-payments/USDT?fiat=UAH"
+            return "https://www.bybit.com/fiat/trade/otc/?actionType=1&token=USDT&fiat=UAH&paymentMethod="
 
     def _is_cache_valid(self) -> bool:
         """Check if cache is still valid"""
@@ -269,7 +278,7 @@ class BinanceP2PAPI(BaseExchange):
         max_amount = offer.get("max_amount", 0)
         link = offer.get("link", "#")
 
-        return f"""💰 <b>Binance P2P Offer</b>
+        return f"""💰 <b>ByBit P2P Offer</b>
 👤 Пользователь: <b>{username}</b>
 💲 Цена: <b>{price:.2f} UAH</b> за USDT
 📊 Доступно: <b>{available:.1f} USDT</b>
@@ -280,7 +289,7 @@ class BinanceP2PAPI(BaseExchange):
         """Clean up resources (close aiohttp session)"""
         if self.session and not self.session.closed:
             await self.session.close()
-            logger.debug("✅ Closed Binance API session")
+            logger.debug("✅ Closed ByBit API session")
 
     def __del__(self):
         """Cleanup on deletion"""
