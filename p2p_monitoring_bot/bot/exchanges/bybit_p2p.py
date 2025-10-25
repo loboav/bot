@@ -45,7 +45,7 @@ MAX_OFFERS_TO_PARSE = 10  # Maximum offers to extract
 
 # Timing constants - OPTIMIZED для скорости
 PAGE_LOAD_TIMEOUT = 8  # Seconds to wait for page load (было 10)
-CONTENT_LOAD_DELAY = 3  # Seconds to wait for dynamic content (было 5, потом 2, теперь 3 для стабильности)
+CONTENT_LOAD_DELAY = 4  # Seconds to wait for dynamic content (было 5→2→3, теперь 4 для максимальной стабильности)
 SCROLL_DELAY = 0.2  # Seconds between scrolls (было 0.5)
 SCROLL_COUNT = 2  # Number of scroll iterations (было 4)
 SCROLL_DISTANCE = 300  # Pixels per scroll

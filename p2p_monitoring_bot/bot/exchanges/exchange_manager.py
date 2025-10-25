@@ -83,24 +83,55 @@ class ExchangeManager:
 
         combined_offers = []
 
-        # Get offers from each exchange
+        # НОВОЕ: Запускаем все биржи ПАРАЛЛЕЛЬНО через asyncio.gather для максимальной скорости!
+        logger.info(f"🚀 Fetching from {len(exchange_names)} exchanges in PARALLEL...")
+
+        # Подготовка задач для параллельного выполнения
+        tasks = []
+        task_names = []
+
         for exchange_name in exchange_names:
             exchange_name = exchange_name.lower()
             if (
                 exchange_name in self._exchanges
                 and exchange_name in self._active_exchanges
             ):
-                try:
-                    exchange = self._exchanges[exchange_name]
-                    logger.info(f"🔄 Fetching offers from {exchange_name}...")
+                exchange = self._exchanges[exchange_name]
+                logger.info(f"🔄 Preparing {exchange_name}...")
 
-                    # Используем метод с таймаутом для лучшей обработки ошибок
-                    if hasattr(exchange, "get_offers_with_timeout"):
-                        offers = await exchange.get_offers_with_timeout(
-                            30, force_refresh=force_refresh
-                        )  # 30 секунд таймаут
-                    else:
-                        offers = await exchange.get_offers(force_refresh=force_refresh)
+                # Создаем задачу для каждой биржи
+                if hasattr(exchange, "get_offers_with_timeout"):
+                    task = exchange.get_offers_with_timeout(
+                        30, force_refresh=force_refresh
+                    )
+                else:
+                    task = exchange.get_offers(force_refresh=force_refresh)
+
+                tasks.append(task)
+                task_names.append(exchange_name)
+
+        # Запускаем все задачи ОДНОВРЕМЕННО и ждем результатов
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Обрабатываем результаты
+            for exchange_name, result in zip(task_names, results):
+                try:
+                    if isinstance(result, Exception):
+                        # Обработка ошибок
+                        if isinstance(result, asyncio.TimeoutError):
+                            logger.error(f"⏱️ Timeout from {exchange_name} - skipping")
+                        elif isinstance(result, ConnectionError):
+                            logger.error(
+                                f"🔌 Connection error with {exchange_name} - skipping"
+                            )
+                        else:
+                            logger.error(
+                                f"❌ Error from {exchange_name}: {result} - skipping"
+                            )
+                        continue
+
+                    offers = result
 
                     if offers:
                         for offer in offers:
@@ -111,26 +142,13 @@ class ExchangeManager:
                     else:
                         logger.warning(f"⚠️ No offers from {exchange_name}")
 
-                except asyncio.TimeoutError:
-                    logger.error(
-                        f"⏱️ Timeout getting offers from {exchange_name} - skipping"
-                    )
-                    # Продолжаем работу с другими биржами
-                    continue
-                except ConnectionError as e:
-                    logger.error(
-                        f"🔌 Connection error with {exchange_name}: {e} - skipping"
-                    )
-                    # Продолжаем работу с другими биржами
-                    continue
                 except Exception as e:
                     logger.error(
-                        f"❌ Error getting offers from {exchange_name}: {e} - skipping"
+                        f"❌ Error processing results from {exchange_name}: {e}"
                     )
                     import traceback
 
                     logger.error(traceback.format_exc())
-                    # Продолжаем работу с другими биржами
                     continue
 
         # Sort by price
