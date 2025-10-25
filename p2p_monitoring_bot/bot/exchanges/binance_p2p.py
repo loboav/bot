@@ -11,6 +11,7 @@ import asyncio
 import re
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Tuple
+from concurrent.futures import ThreadPoolExecutor
 import logging
 
 from selenium import webdriver
@@ -42,15 +43,18 @@ USDT_SEARCH_RADIUS = 15  # Lines to search around price for USDT amount
 LIMIT_SEARCH_RADIUS = 15  # Lines to search around price for limits
 MAX_OFFERS_TO_PARSE = 15  # Maximum offers to extract
 
-# Timing constants
-PAGE_LOAD_TIMEOUT = 10  # Seconds to wait for page load
-CONTENT_LOAD_DELAY = 5  # Seconds to wait for dynamic content
-SCROLL_DELAY = 1  # Seconds between scrolls
-SCROLL_COUNT = 3  # Number of scroll iterations
+# Timing constants - OPTIMIZED для скорости
+PAGE_LOAD_TIMEOUT = 8  # Seconds to wait for page load (было 10)
+CONTENT_LOAD_DELAY = 2  # Seconds to wait for dynamic content (было 5)
+SCROLL_DELAY = 0.3  # Seconds between scrolls (было 1)
+SCROLL_COUNT = 2  # Number of scroll iterations (было 3)
 SCROLL_DISTANCE = 300  # Pixels per scroll
 
 # Cache settings
 CACHE_TTL_MINUTES = 5  # Cache time-to-live in minutes
+
+# Browser reuse settings - НОВОЕ для скорости!
+BROWSER_REUSE_TIME = 600  # 10 минут держим браузер открытым
 
 
 class BinanceP2P(BaseExchange):
@@ -60,11 +64,22 @@ class BinanceP2P(BaseExchange):
         super().__init__("Binance")
         self.driver = None
         self.base_url = "https://p2p.binance.com/ru/trade/all-payments/USDT?fiat=UAH"
+        self.browser_last_used = (
+            None  # НОВОЕ: отслеживаем когда браузер последний раз использовался
+        )
+        self.executor = ThreadPoolExecutor(max_workers=1)  # НОВОЕ: для run_in_executor
 
     def setup_browser(self) -> bool:
         """Setup Chrome browser with maximum speed optimizations"""
+        # НОВОЕ: Проверяем живой ли уже открытый браузер
         if self.driver:
-            return True
+            try:
+                self.driver.current_url  # Проверка что браузер жив
+                logger.debug("Binance: Reusing existing browser instance (FAST!)")
+                return True
+            except Exception:
+                logger.warning("Binance: Browser died, reopening...")
+                self.cleanup()  # Закрываем мертвый браузер
 
         try:
             chrome_options = Options()
@@ -123,11 +138,22 @@ class BinanceP2P(BaseExchange):
             return False
 
     async def get_offers(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
-        """Extract P2P offers from Binance with smart caching"""
+        """Extract P2P offers from Binance with smart caching - ASYNC версия с run_in_executor"""
         # Check cache
         if not force_refresh and self._is_cache_valid():
             logger.info(f"Using cached Binance data ({len(self.offers_cache)} offers)")
             return self.offers_cache
+
+        # Запускаем синхронный парсинг в отдельном потоке чтобы не блокировать бот
+        loop = asyncio.get_event_loop()
+        offers = await loop.run_in_executor(
+            self.executor, self._get_offers_sync, force_refresh
+        )
+
+        return offers
+
+    def _get_offers_sync(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
+        """Синхронная версия парсинга для run_in_executor"""
 
         if not self.setup_browser():
             logger.warning("Browser setup failed, returning cached offers")
@@ -146,17 +172,17 @@ class BinanceP2P(BaseExchange):
                 WebDriverWait(self.driver, PAGE_LOAD_TIMEOUT).until(
                     EC.presence_of_element_located((By.TAG_NAME, "body"))
                 )
-            except:
-                logger.error("Page load timeout")
-                # Clean up browser on error
-                self._force_cleanup_browser()
+            except Exception as e:
+                logger.error(f"Page load timeout: {e}")
                 return self.offers_cache
 
-            # Wait for dynamic content
-            await asyncio.sleep(CONTENT_LOAD_DELAY)
+            # Wait for dynamic content (уменьшено с 5 до 2 секунд)
+            import time
 
-            # Scroll to trigger lazy loading
-            await self._scroll_page()
+            time.sleep(CONTENT_LOAD_DELAY)
+
+            # Scroll to trigger lazy loading (уменьшено с 3 до 2 прокруток)
+            self._scroll_page_sync()
 
             # Extract data
             page_text = self.driver.find_element(By.TAG_NAME, "body").text
@@ -172,31 +198,30 @@ class BinanceP2P(BaseExchange):
             if offers:
                 self.offers_cache = offers
                 self.last_update = datetime.now()
+                self.browser_last_used = (
+                    datetime.now()
+                )  # НОВОЕ: обновляем время использования
                 logger.info(
-                    f"Binance: Successfully extracted {len(offers)} offers in {duration:.1f}s (FAST!)"
+                    f"Binance: Successfully extracted {len(offers)} offers in {duration:.1f}s (OPTIMIZED!)"
                 )
             else:
                 logger.warning(
                     f"No offers extracted from Binance page (took {duration:.1f}s)"
                 )
 
-            # ✅ CRITICAL FIX: Always close browser after successful request
-            self._force_cleanup_browser()
+            # ВАЖНО: НЕ закрываем браузер сразу - переиспользуем!
+            # Закроем позже через cleanup_if_needed()
 
             return offers if offers else self.offers_cache
 
         except ConnectionError as e:
             logger.error(f"Binance connection error: {e} - using cache")
-            # Clean up browser on error
-            self._force_cleanup_browser()
             return self.offers_cache
         except Exception as e:
             logger.error(f"Binance offers fetch failed: {e}")
             import traceback
 
-            logger.debug(traceback.format_exc())
-            # Clean up browser on error
-            self._force_cleanup_browser()
+            logger.error(traceback.format_exc())
             return self.offers_cache
 
     def _is_cache_valid(self) -> bool:
@@ -205,13 +230,15 @@ class BinanceP2P(BaseExchange):
             return False
         return datetime.now() - self.last_update < timedelta(minutes=CACHE_TTL_MINUTES)
 
-    async def _scroll_page(self):
-        """Scroll page to trigger lazy loading"""
+    def _scroll_page_sync(self):
+        """Scroll page to trigger lazy loading - SYNC версия для executor"""
+        import time
+
         for i in range(SCROLL_COUNT):
             self.driver.execute_script(
                 f"window.scrollTo(0, {SCROLL_DISTANCE * (i + 1)});"
             )
-            await asyncio.sleep(SCROLL_DELAY)
+            time.sleep(SCROLL_DELAY)
 
     def _extract_advertiser_ids(self, page_source: str) -> List[str]:
         """Extract advertiser IDs from page source using multiple methods"""
@@ -817,21 +844,29 @@ class BinanceP2P(BaseExchange):
 ⚡ Быстрая ссылка: {self.base_url}""".strip()
 
     def _force_cleanup_browser(self):
-        """Force cleanup browser immediately after request"""
-        if self.driver:
-            try:
-                self.driver.quit()
-                logger.debug("Binance browser closed after request")
-            except Exception as e:
-                logger.debug(f"Error closing Binance browser: {e}")
-            finally:
-                self.driver = None
+        """Force cleanup browser immediately after request - DEPRECATED, используем cleanup_if_needed"""
+        # ВАЖНО: Больше НЕ вызываем это автоматически!
+        # Браузер переиспользуется между запросами для скорости
+        pass
 
     def cleanup_if_needed(self):
-        """Smart cleanup - only if browser is not responding"""
+        """Smart cleanup - закрываем браузер только если он давно не использовался или не отвечает"""
         if self.driver:
             try:
+                # Проверяем жив ли браузер
                 self.driver.current_url
+
+                # НОВОЕ: Закрываем если браузер долго не использовался (экономим память)
+                if self.browser_last_used:
+                    idle_time = (
+                        datetime.now() - self.browser_last_used
+                    ).total_seconds()
+                    if idle_time > BROWSER_REUSE_TIME:
+                        logger.info(
+                            f"Binance: Closing idle browser (idle for {idle_time:.0f}s)"
+                        )
+                        self.cleanup()
+
             except Exception:
                 logger.warning("Binance browser not responding, cleaning up")
                 try:
@@ -839,6 +874,7 @@ class BinanceP2P(BaseExchange):
                 except:
                     pass
                 self.driver = None
+                self.browser_last_used = None
 
     def cleanup(self):
         """Clean up browser resources"""
@@ -846,6 +882,21 @@ class BinanceP2P(BaseExchange):
             try:
                 self.driver.quit()
                 self.driver = None
+                self.browser_last_used = None
                 logger.info("Binance browser cleaned up")
+            except KeyboardInterrupt:
+                # Тихо закрываем при Ctrl+C
+                self.driver = None
+                self.browser_last_used = None
             except Exception as e:
-                logger.error(f"Error cleaning up browser: {e}")
+                # Игнорируем ошибки при закрытии (ConnectionRefusedError и т.д.)
+                logger.debug(f"Binance cleanup error (ignored): {e}")
+                self.driver = None
+                self.browser_last_used = None
+
+        # Закрываем executor при полной очистке
+        if hasattr(self, "executor"):
+            try:
+                self.executor.shutdown(wait=False)
+            except Exception:
+                pass  # Игнорируем ошибки при закрытии executor

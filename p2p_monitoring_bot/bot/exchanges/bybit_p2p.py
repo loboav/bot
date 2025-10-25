@@ -11,6 +11,7 @@ import asyncio
 import re
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Tuple
+from concurrent.futures import ThreadPoolExecutor
 import logging
 
 from selenium import webdriver
@@ -42,15 +43,18 @@ USDT_SEARCH_RADIUS = 5  # Lines to search around price for USDT amount
 LIMIT_SEARCH_RADIUS = 5  # Lines to search around price for limits
 MAX_OFFERS_TO_PARSE = 10  # Maximum offers to extract
 
-# Timing constants
-PAGE_LOAD_TIMEOUT = 10  # Seconds to wait for page load
-CONTENT_LOAD_DELAY = 5  # Seconds to wait for dynamic content
-SCROLL_DELAY = 0.5  # Seconds between scrolls
-SCROLL_COUNT = 4  # Number of scroll iterations
-SCROLL_DISTANCE = 250  # Pixels per scroll
+# Timing constants - OPTIMIZED для скорости
+PAGE_LOAD_TIMEOUT = 8  # Seconds to wait for page load (было 10)
+CONTENT_LOAD_DELAY = 3  # Seconds to wait for dynamic content (было 5, потом 2, теперь 3 для стабильности)
+SCROLL_DELAY = 0.2  # Seconds between scrolls (было 0.5)
+SCROLL_COUNT = 2  # Number of scroll iterations (было 4)
+SCROLL_DISTANCE = 300  # Pixels per scroll
 
 # Cache settings
 CACHE_TTL_MINUTES = 5  # Cache time-to-live in minutes
+
+# Browser reuse settings - НОВОЕ для скорости!
+BROWSER_REUSE_TIME = 600  # 10 минут держим браузер открытым
 
 
 class ByBitP2P(BaseExchange):
@@ -60,11 +64,22 @@ class ByBitP2P(BaseExchange):
         super().__init__("ByBit")
         self.driver = None
         self.base_url = EXCHANGE_URLS["bybit"]
+        self.browser_last_used = (
+            None  # НОВОЕ: отслеживаем когда браузер последний раз использовался
+        )
+        self.executor = ThreadPoolExecutor(max_workers=1)  # НОВОЕ: для run_in_executor
 
     def setup_browser(self) -> bool:
         """Setup Chrome browser with maximum speed optimizations"""
+        # НОВОЕ: Проверяем живой ли уже открытый браузер
         if self.driver:
-            return True
+            try:
+                self.driver.current_url  # Проверка что браузер жив
+                logger.debug("ByBit: Reusing existing browser instance (FAST!)")
+                return True
+            except Exception:
+                logger.warning("ByBit: Browser died, reopening...")
+                self.cleanup()  # Закрываем мертвый браузер
 
         try:
             chrome_options = Options()
@@ -123,12 +138,22 @@ class ByBitP2P(BaseExchange):
             return False
 
     async def get_offers(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
-        """Extract P2P offers from ByBit with smart caching"""
+        """Extract P2P offers from ByBit with smart caching - ASYNC версия с run_in_executor"""
         # Check cache
         if not force_refresh and self._is_cache_valid():
             logger.info(f"Using cached ByBit data ({len(self.offers_cache)} offers)")
             return self.offers_cache
 
+        # Запускаем синхронный парсинг в отдельном потоке чтобы не блокировать бот
+        loop = asyncio.get_event_loop()
+        offers = await loop.run_in_executor(
+            self.executor, self._get_offers_sync, force_refresh
+        )
+
+        return offers
+
+    def _get_offers_sync(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
+        """Синхронная версия парсинга для run_in_executor"""
         if not self.setup_browser():
             logger.warning("Browser setup failed, returning cached offers")
             return self.offers_cache
@@ -148,15 +173,15 @@ class ByBitP2P(BaseExchange):
                 )
             except Exception as e:
                 logger.error(f"Page load timeout: {e}")
-                # Clean up browser on error
-                self._force_cleanup_browser()
                 return self.offers_cache
 
-            # Wait for dynamic content
-            await asyncio.sleep(CONTENT_LOAD_DELAY)
+            # Wait for dynamic content (уменьшено с 5 до 2 секунд)
+            import time
 
-            # Scroll to trigger lazy loading
-            await self._scroll_page()
+            time.sleep(CONTENT_LOAD_DELAY)
+
+            # Scroll to trigger lazy loading (уменьшено с 4 до 2 прокруток)
+            self._scroll_page_sync()
 
             # Extract data
             page_text = self.driver.find_element(By.TAG_NAME, "body").text
@@ -170,31 +195,30 @@ class ByBitP2P(BaseExchange):
             if offers:
                 self.offers_cache = offers
                 self.last_update = datetime.now()
+                self.browser_last_used = (
+                    datetime.now()
+                )  # НОВОЕ: обновляем время использования
                 logger.info(
-                    f"ByBit: Successfully extracted {len(offers)} offers in {duration:.1f}s (FAST!)"
+                    f"ByBit: Successfully extracted {len(offers)} offers in {duration:.1f}s (OPTIMIZED!)"
                 )
             else:
                 logger.warning(
                     f"No offers extracted from ByBit page (took {duration:.1f}s)"
                 )
 
-            # ✅ CRITICAL FIX: Always close browser after successful request
-            self._force_cleanup_browser()
+            # ВАЖНО: НЕ закрываем браузер сразу - переиспользуем!
+            # Закроем позже через cleanup_if_needed()
 
             return offers if offers else self.offers_cache
 
         except ConnectionError as e:
             logger.error(f"ByBit connection error: {e} - using cache")
-            # Clean up browser on error
-            self._force_cleanup_browser()
             return self.offers_cache
         except Exception as e:
             logger.error(f"ByBit offers fetch failed: {e} - using cache")
             import traceback
 
             logger.debug(traceback.format_exc())
-            # Clean up browser on error
-            self._force_cleanup_browser()
             return self.offers_cache
 
     def _is_cache_valid(self) -> bool:
@@ -203,13 +227,15 @@ class ByBitP2P(BaseExchange):
             return False
         return datetime.now() - self.last_update < timedelta(minutes=CACHE_TTL_MINUTES)
 
-    async def _scroll_page(self):
-        """Scroll page to trigger lazy loading"""
+    def _scroll_page_sync(self):
+        """Scroll page to trigger lazy loading - SYNC версия для executor"""
+        import time
+
         for i in range(SCROLL_COUNT):
             self.driver.execute_script(
                 f"window.scrollTo(0, {SCROLL_DISTANCE * (i + 1)});"
             )
-            await asyncio.sleep(SCROLL_DELAY)
+            time.sleep(SCROLL_DELAY)
 
     def _parse_offers(self, page_text: str) -> List[Dict[str, Any]]:
         """Parse offers from page text with improved pattern matching"""
@@ -430,21 +456,29 @@ class ByBitP2P(BaseExchange):
 ⚡ Быстрая ссылка: {self.base_url}""".strip()
 
     def _force_cleanup_browser(self):
-        """Force cleanup browser immediately after request"""
-        if self.driver:
-            try:
-                self.driver.quit()
-                logger.debug("ByBit browser closed after request")
-            except Exception as e:
-                logger.debug(f"Error closing ByBit browser: {e}")
-            finally:
-                self.driver = None
+        """Force cleanup browser immediately after request - DEPRECATED, используем cleanup_if_needed"""
+        # ВАЖНО: Больше НЕ вызываем это автоматически!
+        # Браузер переиспользуется между запросами для скорости
+        pass
 
     def cleanup_if_needed(self):
-        """Smart cleanup - only if browser is not responding"""
+        """Smart cleanup - закрываем браузер только если он давно не использовался или не отвечает"""
         if self.driver:
             try:
+                # Проверяем жив ли браузер
                 self.driver.current_url
+
+                # НОВОЕ: Закрываем если браузер долго не использовался (экономим память)
+                if self.browser_last_used:
+                    idle_time = (
+                        datetime.now() - self.browser_last_used
+                    ).total_seconds()
+                    if idle_time > BROWSER_REUSE_TIME:
+                        logger.info(
+                            f"ByBit: Closing idle browser (idle for {idle_time:.0f}s)"
+                        )
+                        self.cleanup()
+
             except Exception:
                 logger.warning("ByBit browser not responding, cleaning up")
                 try:
@@ -453,6 +487,7 @@ class ByBitP2P(BaseExchange):
                     logger.debug(f"Error during ByBit cleanup: {cleanup_error}")
                     pass
                 self.driver = None
+                self.browser_last_used = None
 
     def cleanup(self):
         """Clean up browser resources"""
@@ -460,7 +495,21 @@ class ByBitP2P(BaseExchange):
             try:
                 self.driver.quit()
                 self.driver = None
+                self.browser_last_used = None
                 logger.info("ByBit browser cleaned up")
-            except Exception as e:
-                logger.warning(f"Error cleaning up ByBit browser: {e}")
+            except KeyboardInterrupt:
+                # Тихо закрываем при Ctrl+C
                 self.driver = None
+                self.browser_last_used = None
+            except Exception as e:
+                # Игнорируем ошибки при закрытии (ConnectionRefusedError и т.д.)
+                logger.debug(f"ByBit cleanup error (ignored): {e}")
+                self.driver = None
+                self.browser_last_used = None
+
+        # Закрываем executor при полной очистке
+        if hasattr(self, "executor"):
+            try:
+                self.executor.shutdown(wait=False)
+            except Exception:
+                pass  # Игнорируем ошибки при закрытии executor

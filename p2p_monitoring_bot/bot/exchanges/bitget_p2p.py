@@ -8,8 +8,9 @@ Real Bitget P2P data extraction using browser automation
 
 import asyncio
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor
 import logging
 
 from selenium import webdriver
@@ -31,6 +32,10 @@ from config.settings import BROWSER_HEADLESS, BROWSER_TIMEOUT, EXCHANGE_URLS
 
 logger = logging.getLogger(__name__)
 
+# Browser reuse settings - НОВОЕ для скорости!
+BROWSER_REUSE_TIME = 600  # 10 минут держим браузер открытым
+CACHE_TTL_MINUTES = 5  # Cache time-to-live
+
 
 class BitgetP2P(BaseExchange):
     """Bitget P2P integration with real browser data extraction"""
@@ -44,11 +49,22 @@ class BitgetP2P(BaseExchange):
         self.base_url = (
             "https://www.bitget.com/ru/p2p-trade?paymethodIds=-1&fiatName=UAH"
         )
+        self.browser_last_used = (
+            None  # НОВОЕ: отслеживаем когда браузер последний раз использовался
+        )
+        self.executor = ThreadPoolExecutor(max_workers=1)  # НОВОЕ: для run_in_executor
 
     def setup_browser(self):
         """Setup Chrome browser with optimized settings"""
+        # НОВОЕ: Проверяем живой ли уже открытый браузер
         if self.driver:
-            return True
+            try:
+                self.driver.current_url  # Проверка что браузер жив
+                logger.debug("Bitget: Reusing existing browser instance (FAST!)")
+                return True
+            except Exception:
+                logger.warning("Bitget: Browser died, reopening...")
+                self.cleanup()  # Закрываем мертвый браузер
 
         try:
             chrome_options = Options()
@@ -107,16 +123,25 @@ class BitgetP2P(BaseExchange):
             return False
 
     async def get_offers(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
-        """Extract real P2P offers from Bitget website - OPTIMIZED VERSION"""
+        """Extract real P2P offers from Bitget website - OPTIMIZED VERSION с run_in_executor"""
         # Check cache first (5 minutes TTL) unless force refresh is requested
         if not force_refresh and self.offers_cache and self.last_update:
-            from datetime import timedelta
-
-            if datetime.now() - self.last_update < timedelta(minutes=5):
+            if datetime.now() - self.last_update < timedelta(minutes=CACHE_TTL_MINUTES):
                 logger.info(
                     f"Using cached Bitget data ({len(self.offers_cache)} offers)"
                 )
                 return self.offers_cache
+
+        # Запускаем синхронный парсинг в отдельном потоке чтобы не блокировать бот
+        loop = asyncio.get_event_loop()
+        offers = await loop.run_in_executor(
+            self.executor, self._get_offers_sync, force_refresh
+        )
+
+        return offers
+
+    def _get_offers_sync(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
+        """Синхронная версия парсинга для run_in_executor"""
 
         if not self.setup_browser():
             logger.warning("Browser setup failed, returning cached offers")
@@ -132,22 +157,22 @@ class BitgetP2P(BaseExchange):
 
             # OPTIMIZATION: Reduced wait times and smarter loading
             try:
-                WebDriverWait(self.driver, 10).until(
+                WebDriverWait(self.driver, 8).until(
                     EC.presence_of_element_located((By.TAG_NAME, "body"))
                 )
             except:
                 logger.error("Page load timeout")
-                # Clean up browser on error
-                self._force_cleanup_browser()
                 return self.offers_cache
 
-            # OPTIMIZATION: Much shorter wait for dynamic content
-            await asyncio.sleep(5)  # Give time for P2P data to load
+            # OPTIMIZATION: Much shorter wait for dynamic content (было 5, стало 2)
+            import time
 
-            # OPTIMIZATION: Multiple small scrolls to trigger lazy loading
-            for i in range(3):
+            time.sleep(2)  # Give time for P2P data to load (OPTIMIZED)
+
+            # OPTIMIZATION: Less scrolls for speed (было 3, стало 2)
+            for i in range(2):
                 self.driver.execute_script(f"window.scrollTo(0, {300 * (i + 1)});")
-                await asyncio.sleep(1)  # Short waits
+                time.sleep(0.3)  # Faster scrolls (было 1, стало 0.3)
 
             # Extract offers from page text AND HTML - OPTIMIZED
             page_text = self.driver.find_element(By.TAG_NAME, "body").text
@@ -161,31 +186,30 @@ class BitgetP2P(BaseExchange):
             if offers:
                 self.offers_cache = offers
                 self.last_update = datetime.now()
+                self.browser_last_used = (
+                    datetime.now()
+                )  # НОВОЕ: обновляем время использования
                 logger.info(
-                    f"Bitget: Successfully extracted {len(offers)} offers in {duration:.1f}s (FAST!)"
+                    f"Bitget: Successfully extracted {len(offers)} offers in {duration:.1f}s (OPTIMIZED!)"
                 )
             else:
                 logger.warning(
                     f"No offers extracted from Bitget page (took {duration:.1f}s)"
                 )
 
-            # ✅ CRITICAL FIX: Always close browser after successful request
-            self._force_cleanup_browser()
+            # ВАЖНО: НЕ закрываем браузер сразу - переиспользуем!
+            # Закроем позже через cleanup_if_needed()
 
             return offers if offers else self.offers_cache
 
         except ConnectionError as e:
             logger.error(f"Bitget connection error: {e} - using cache")
-            # Clean up browser on error
-            self._force_cleanup_browser()
             return self.offers_cache
         except Exception as e:
             logger.error(f"Bitget offers fetch failed: {e}")
             import traceback
 
-            logger.debug(traceback.format_exc())
-            # Clean up browser on error
-            self._force_cleanup_browser()
+            logger.error(traceback.format_exc())
             return self.offers_cache
 
     def parse_offers_from_page_text(
@@ -364,22 +388,29 @@ class BitgetP2P(BaseExchange):
 ⚡ Быстрая ссылка: {self.base_url}""".strip()
 
     def _force_cleanup_browser(self):
-        """Force cleanup browser immediately after request"""
-        if self.driver:
-            try:
-                self.driver.quit()
-                logger.debug("Bitget browser closed after request")
-            except Exception as e:
-                logger.debug(f"Error closing Bitget browser: {e}")
-            finally:
-                self.driver = None
+        """Force cleanup browser immediately after request - DEPRECATED, используем cleanup_if_needed"""
+        # ВАЖНО: Больше НЕ вызываем это автоматически!
+        # Браузер переиспользуется между запросами для скорости
+        pass
 
     def cleanup_if_needed(self):
-        """Smart cleanup - only if browser has been idle"""
+        """Smart cleanup - закрываем браузер только если он давно не использовался или не отвечает"""
         if self.driver:
             try:
-                # Проверяем, что браузер еще отвечает
+                # Проверяем жив ли браузер
                 self.driver.current_url
+
+                # НОВОЕ: Закрываем если браузер долго не использовался (экономим память)
+                if self.browser_last_used:
+                    idle_time = (
+                        datetime.now() - self.browser_last_used
+                    ).total_seconds()
+                    if idle_time > BROWSER_REUSE_TIME:
+                        logger.info(
+                            f"Bitget: Closing idle browser (idle for {idle_time:.0f}s)"
+                        )
+                        self.cleanup()
+
             except Exception:
                 # Браузер не отвечает, очищаем
                 logger.warning("Bitget browser not responding, cleaning up")
@@ -388,6 +419,7 @@ class BitgetP2P(BaseExchange):
                 except:
                     pass
                 self.driver = None
+                self.browser_last_used = None
 
     def cleanup(self):
         """Clean up browser resources"""
@@ -395,6 +427,21 @@ class BitgetP2P(BaseExchange):
             try:
                 self.driver.quit()
                 self.driver = None
+                self.browser_last_used = None
                 logger.info("Bitget browser cleaned up")
+            except KeyboardInterrupt:
+                # Тихо закрываем при Ctrl+C
+                self.driver = None
+                self.browser_last_used = None
             except Exception as e:
-                logger.error(f"Error cleaning up browser: {e}")
+                # Игнорируем ошибки при закрытии (ConnectionRefusedError и т.д.)
+                logger.debug(f"Bitget cleanup error (ignored): {e}")
+                self.driver = None
+                self.browser_last_used = None
+
+        # Закрываем executor при полной очистке
+        if hasattr(self, "executor"):
+            try:
+                self.executor.shutdown(wait=False)
+            except Exception:
+                pass  # Игнорируем ошибки при закрытии executor
