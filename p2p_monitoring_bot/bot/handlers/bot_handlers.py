@@ -510,6 +510,9 @@ class BotHandlers:
 
         elif query.data == "toggle_automonitor":
             await self._handle_automonitor_toggle(update, context)
+        
+        elif query.data == "toggle_auto_open_browser":
+            await self._handle_auto_open_browser_toggle(update, context)
 
         elif query.data == "show_status":
             await self.status_command(update, context)
@@ -719,11 +722,18 @@ class BotHandlers:
         is_user_enabled = user_data.get("auto_monitoring_enabled", False)
 
         # Create toggle button
+        auto_open_enabled = user_data.get("auto_open_browser", True)
         keyboard = [
             [
                 InlineKeyboardButton(
                     f"{'❌ Выключить' if is_user_enabled else '✅ Включить'} автомониторинг",
                     callback_data="toggle_automonitor",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    f"🌐 Автооткрытие браузера: {'✅ ВКЛ' if auto_open_enabled else '❌ ВЫКЛ'}",
+                    callback_data="toggle_auto_open_browser",
                 )
             ],
             [
@@ -738,6 +748,7 @@ class BotHandlers:
 🤖 <b>Автомониторинг P2P предложений</b>
 
 👤 <b>Ваш статус:</b> {"✅ Включен" if is_user_enabled else "❌ Выключен"}
+🌐 <b>Автооткрытие браузера:</b> {"✅ Включено" if user_data.get("auto_open_browser", True) else "❌ Выключено"}
 
 ⚡ <b>Ваши настройки (узкий диапазон):</b>
 💰 Диапазон: <b>{user_data.get("auto_monitor_min_rate", 40.5):.2f} - {user_data.get("auto_monitor_max_rate", 41.5):.2f} UAH</b>
@@ -755,6 +766,9 @@ class BotHandlers:
 
 💡 <b>Как это работает:</b>
 Бот проверяет только топ-5 предложений каждые 20 секунд. Используется узкий диапазон цен для поиска самых выгодных предложений.
+
+🌐 <b>Автооткрытие браузера:</b>
+При включении этой функции, когда приходит уведомление о выгодном предложении, ссылка автоматически откроется в вашем браузере. Вы сразу попадете на страницу покупки без лишних кликов!
 
 ⚡ <b>Совет по скорости:</b>
 • Binance: ~10 сек (самая быстрая ⚡)
@@ -793,12 +807,22 @@ class BotHandlers:
 
         # Update message with new status
         monitoring_status = self.auto_monitor.get_monitoring_status()
+        
+        # Get auto_open_browser status
+        user_data = self.bot.user_manager.get_user_data(user_id)
+        auto_open_enabled = user_data.get("auto_open_browser", True)
 
         keyboard = [
             [
                 InlineKeyboardButton(
                     f"{'❌ Выключить' if new_status else '✅ Включить'} автомониторинг",
                     callback_data="toggle_automonitor",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    f"🌐 Автооткрытие браузера: {'✅ ВКЛ' if auto_open_enabled else '❌ ВЫКЛ'}",
+                    callback_data="toggle_auto_open_browser",
                 )
             ],
             [
@@ -824,6 +848,83 @@ class BotHandlers:
 • Без лимитов - получайте все уведомления! 🚀
         """.strip()
 
+        await query.edit_message_text(
+            status_text, reply_markup=reply_markup, parse_mode="HTML"
+        )
+    
+    async def _handle_auto_open_browser_toggle(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
+        """Handle auto-open browser toggle button"""
+        query = update.callback_query
+        user_id = query.from_user.id
+        
+        user_data = self.bot.user_manager.get_user_data(user_id)
+        current_status = user_data.get("auto_open_browser", True)
+        new_status = not current_status
+        
+        # Update user's auto-open browser setting
+        self.bot.user_manager.update_user_data(
+            user_id, {"auto_open_browser": new_status}
+        )
+        
+        # Get updated user data and monitoring status
+        user_data = self.bot.user_manager.get_user_data(user_id)
+        is_monitoring_enabled = user_data.get("auto_monitoring_enabled", False)
+        
+        if self.auto_monitor:
+            monitoring_status = self.auto_monitor.get_monitoring_status()
+        else:
+            monitoring_status = {"active": False, "enabled_users_count": 0}
+        
+        # Create updated keyboard
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    f"{'❌ Выключить' if is_monitoring_enabled else '✅ Включить'} автомониторинг",
+                    callback_data="toggle_automonitor",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    f"🌐 Автооткрытие браузера: {'✅ ВКЛ' if new_status else '❌ ВЫКЛ'}",
+                    callback_data="toggle_auto_open_browser",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📊 Статус системы", callback_data="automonitor_system_status"
+                )
+            ],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        status_emoji = "✅" if new_status else "❌"
+        
+        # Prepare description text
+        if new_status:
+            description = "🚀 <b>Теперь при получении уведомления о выгодном предложении, ссылка автоматически откроется в вашем браузере!</b>"
+            how_it_works = "• Приходит уведомление от бота\n• Ссылка на предложение автоматически открывается в браузере\n• Вы сразу попадаете на страницу покупки\n• Никаких лишних кликов!"
+        else:
+            description = "📱 Теперь вам нужно будет вручную открывать ссылки из уведомлений."
+            how_it_works = "• Приходит уведомление от бота\n• Вы нажимаете на ссылку в сообщении\n• Открывается страница покупки"
+        
+        status_text = f"""
+🌐 <b>Автооткрытие браузера обновлено!</b>
+
+{status_emoji} <b>Статус:</b> {"Включено" if new_status else "Выключено"}
+
+{description}
+
+💡 <b>Как это работает:</b>
+{how_it_works}
+
+🤖 <b>Автомониторинг:</b> {"✅ Включен" if is_monitoring_enabled else "❌ Выключен"}
+📊 <b>Система:</b> {"🟢 Активна" if monitoring_status["active"] else "🔴 Остановлена"}
+
+⚙️ Управление: /automonitor
+        """.strip()
+        
         await query.edit_message_text(
             status_text, reply_markup=reply_markup, parse_mode="HTML"
         )

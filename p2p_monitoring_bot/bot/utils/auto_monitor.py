@@ -18,6 +18,11 @@ from config.settings import (
     AUTO_MONITOR_TOP_OFFERS_LIMIT,
 )
 
+try:
+    from .browser_opener import BrowserOpener
+except ImportError:
+    from browser_opener import BrowserOpener
+
 logger = logging.getLogger(__name__)
 
 
@@ -306,10 +311,56 @@ class AutoMonitor:
             )
 
             logger.info(f"✅ Notification sent to user {user_id}")
+            
+            # Auto-open browser if enabled for this user
+            await self._auto_open_browser_if_enabled(user_id, offers)
 
         except Exception as e:
             logger.error(f"Error sending notification to user {user_id}: {e}")
             logger.error(traceback.format_exc())
+    
+    async def _auto_open_browser_if_enabled(self, user_id: int, offers: List[Dict]):
+        """Automatically open offer links in browser if user has this feature enabled"""
+        try:
+            user_data = self.bot.user_manager.get_user_data(user_id)
+            auto_open_enabled = user_data.get('auto_open_browser', True)
+            
+            if not auto_open_enabled:
+                logger.info(f"Auto-open browser disabled for user {user_id}")
+                return
+            
+            if not offers:
+                logger.info(f"No offers to open for user {user_id}")
+                return
+            
+            # Extract links from offers
+            links_to_open = []
+            for offer in offers:
+                link = offer.get('link')
+                if link and link != '#':
+                    links_to_open.append(link)
+            
+            if not links_to_open:
+                logger.warning(f"No valid links found in offers for user {user_id}")
+                return
+            
+            logger.info(f"🌐 Auto-opening {len(links_to_open)} links in browser for user {user_id}")
+            
+            # Open links in browser (run in executor to not block async loop)
+            import asyncio
+            loop = asyncio.get_event_loop()
+            
+            def open_links():
+                return BrowserOpener.open_multiple_urls(links_to_open, delay_seconds=0.3)
+            
+            success_count = await loop.run_in_executor(None, open_links)
+            
+            logger.info(f"✅ Auto-opened {success_count}/{len(links_to_open)} links for user {user_id}")
+            
+        except Exception as e:
+            logger.error(f"Error auto-opening browser for user {user_id}: {e}")
+            logger.error(traceback.format_exc())
+            # Don't fail the notification if browser opening fails
 
     async def toggle_user_monitoring(self, user_id: int, enabled: bool) -> str:
         """Toggle auto monitoring for specific user"""

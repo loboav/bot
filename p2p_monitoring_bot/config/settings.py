@@ -31,8 +31,9 @@ OFFERS_CACHE_FILE = "temp/offers_cache.json"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")  # DEBUG, INFO, WARNING, ERROR
 
 # Автомониторинг настройки (БЕЗ ЛИМИТОВ - для личного использования)
-AUTO_MONITORING_INTERVAL = int(os.getenv("AUTO_MONITORING_INTERVAL", "20"))  # 20 секунд - быстрая проверка для лучших предложений
+AUTO_MONITORING_INTERVAL = int(os.getenv("AUTO_MONITORING_INTERVAL", "5"))  # 5 секунд - МАКСИМАЛЬНАЯ СКОРОСТЬ для 1 человека!
 AUTO_MONITOR_TOP_OFFERS_LIMIT = int(os.getenv("AUTO_MONITOR_TOP_OFFERS_LIMIT", "5"))  # проверять только топ 5 предложений
+AUTO_OPEN_BROWSER = os.getenv("AUTO_OPEN_BROWSER", "true").lower() == "true"  # автоматически открывать ссылки в браузере
 
 # Bitget API настройки (установите в .env файле)
 BITGET_API_KEY = os.getenv("BITGET_API_KEY", "")
@@ -55,6 +56,7 @@ DEFAULT_USER_SETTINGS = {
     
     'notifications_enabled': True,
     'auto_monitoring_enabled': False,  # Автомониторинг выключен по умолчанию
+    'auto_open_browser': True,  # Автоматически открывать ссылки в браузере
     'active_exchanges': ['bybit', 'bitget', 'binance']  # Теперь поддерживаем три биржи
 }
 
